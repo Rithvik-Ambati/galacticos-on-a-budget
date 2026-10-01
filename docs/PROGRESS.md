@@ -14,11 +14,60 @@
 
 ## Phase 1 — Data foundation
 
-*(filled in once built)*
+**The real Transfermarkt/Understat pulls were replaced with a synthetic generator**
+(`pipeline/synthetic_source.py`) — see docs/DECISIONS.md for why. It emits two
+independent, intentionally-disagreeing "sources" (perturbed names, only a subset of
+clubs covered by the "Understat" side) so `pipeline/id_resolution.py`'s normalised
+name + DOB + club matching, fuzzy fallback and unresolved-case CSV all do real work
+against real disagreement, not a no-op.
+
+Built: `pipeline/synthetic_source.py`, `pipeline/id_resolution.py`, `pipeline/ingest.py`
+(loads players/clubs/national_teams/player_id_map/squads/player_stats_season),
+`pipeline/data_quality.py`, `db/bootstrap.py` (SQLite/dev table creation).
+
+`python -m pipeline.run_all` against a fresh SQLite db (seed 42): 830 players, 10 UCL
+club squads (25 each), 12 WC2026 national squads (23 each, all from real nationality
+pools so they're genuinely eligible-and-excluded rather than placeholder), 697/830
+matched to "Understat" stats (0 unresolved after fixing the uniqueness bug below).
+
+**Bug found and fixed during this phase**: the first id_resolution pass let two
+different Understat records both claim the same Transfermarkt player when several
+squad-mates shared a date of birth — a real `UNIQUE constraint failed` on
+`player_id_map.player_id`. Fixed by tracking claimed `tm_id`s and skipping them for
+subsequent matches (`pipeline/id_resolution.py::resolve`), which also matches reality:
+a real player has exactly one Understat identity, never two.
 
 ## Phase 2 — Ability + pricing
 
-*(filled in once built)*
+Built: `pipeline/features.py` (per-90s, position-relative percentiles via
+`scipy.stats.rankdata`, ability score, confidence flag, style vector, on-demand
+role-fit via `compute_role_fit`), `pipeline/pricing.py` (XGBoost de-biased pricing).
+
+**Bug found and fixed**: `ABILITY_WEIGHTS`/`ROLE_FIT_FORMULAS` keys (e.g. `"xg_pct"`)
+didn't match the percentile dict's actual keys (`"xg_per90_pct"`), so every lookup
+silently fell back to a constant 50.0 — forwards' ability scores were *all exactly
+50.0* regardless of real quality (correlation with the synthetic ground-truth quality
+was 0.109 for FW vs 0.83+ for defenders, where the key names happened to partially
+collide and so partially worked). This is exactly the kind of silent-wrong-number bug
+CLAUDE.md rule 1 exists to catch, and it would never have shown up as a crash — only
+as a bad top-50 list. Fixed by stripping the `_per90` suffix consistently when
+building percentile keys. Verified with `tests/test_pipeline.py`'s correlation
+assertions (per position group, not just overall) so this class of bug fails loudly
+next time.
+
+**Budget sanity check, run as instructed rather than silently tuned**: the first
+market-value curve let a full top-2%-ability XI fit under EUR500M (`full_elite_xi_fits
+_under_budget: True`), which the Phase 2 prompt says to report and adjust rather than
+hide. Re-tuned the synthetic market-value curve's exponent/scale (`pipeline/
+synthetic_source.py`, documented in its own comment) so the top price is ~EUR150M and
+the budget now affords roughly 2 elite players alongside 8 median starters —
+close to DESIGN.md's "~3 elite + 8 good" target. Pricing MAE: ~40% of mean market
+value on held-out data, which is close to the synthetic generator's own built-in
++/-30% multiplicative noise floor, not a claim about real-world pricing accuracy.
+
+Manual check done: the top-50 price list is dominated by the highest true_quality
+synthetic players across all positions (not just one group), and young-vs-old /
+different-league players price sensibly relative to their ability score.
 
 ## Phase 3 — Engine core
 

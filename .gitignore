@@ -5,6 +5,8 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 dev.db
+data/
+evals/reports/*.json
 .env
 node_modules/
 dist/

@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy.types import JSON, TypeDecorator, UserDefinedType
 
 
-class _PgVector(UserDefinedType):
+class _PgVector(UserDefinedType[list[float]]):
     cache_ok = True
 
     def __init__(self, dim: int) -> None:

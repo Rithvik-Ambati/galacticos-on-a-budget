@@ -108,6 +108,41 @@ FORMATIONS: dict[str, tuple[Slot, ...]] = {
     ),
 }
 
+# Phase 2: position-group ability weights over per-90 PERCENTILES (0-100 each,
+# computed within the position group). Implements docs/DESIGN.md section 7.1.
+ABILITY_WEIGHTS: dict[str, dict[str, float]] = {
+    "GK": {"pass_completion_pct": 0.45, "aerial_win_pct_pct": 0.35, "dribbled_past_pct_inv": 0.20},
+    "DF": {
+        "tackles_won_pct": 0.25, "aerial_win_pct_pct": 0.20, "dribbled_past_pct_inv": 0.25,
+        "pass_completion_pct": 0.15, "progressive_carries_pct": 0.15,
+    },
+    "MF": {
+        "pass_completion_pct": 0.25, "key_passes_pct": 0.20, "progressive_carries_pct": 0.20,
+        "tackles_won_pct": 0.15, "xa_pct": 0.20,
+    },
+    "FW": {"xg_pct": 0.40, "shots_pct": 0.15, "take_ons_won_pct": 0.20, "xa_pct": 0.25},
+}
+
+MIN_MINUTES_THRESHOLD: int = 300
+LOW_COVERAGE_LEAGUE_STRENGTH: float = 0.8  # below this -> ability from TM appearance data only
+LOW_COVERAGE_CONFIDENCE: float = 0.4
+FULL_COVERAGE_LOW_MINUTES_CONFIDENCE: float = 0.75
+
+# Role-fit formulas: role -> {percentile_key: weight}, same percentile vocabulary as above.
+ROLE_FIT_FORMULAS: dict[str, dict[str, float]] = {
+    "ball_playing_cb": {"pass_completion_pct": 0.6, "progressive_carries_pct": 0.4},
+    "stopper_cb": {"tackles_won_pct": 0.5, "aerial_win_pct_pct": 0.5},
+    "inverted_fb": {"pass_completion_pct": 0.5, "progressive_carries_pct": 0.5},
+    "overlapping_fb": {"take_ons_won_pct": 0.5, "progressive_carries_pct": 0.5},
+    "ball_winning_dm": {"tackles_won_pct": 0.7, "dribbled_past_pct_inv": 0.3},
+    "deep_lying_playmaker": {"pass_completion_pct": 0.5, "key_passes_pct": 0.5},
+    "box_to_box": {"progressive_carries_pct": 0.5, "tackles_won_pct": 0.5},
+    "inside_forward": {"xg_pct": 0.5, "take_ons_won_pct": 0.5},
+    "winger": {"take_ons_won_pct": 0.5, "xa_pct": 0.5},
+    "poacher": {"xg_pct": 0.7, "shots_pct": 0.3},
+    "target_man": {"aerial_win_pct_pct": 0.6, "xg_pct": 0.4},
+}
+
 ROLE_TEMPLATES: tuple[str, ...] = (
     "ball_playing_cb",
     "stopper_cb",

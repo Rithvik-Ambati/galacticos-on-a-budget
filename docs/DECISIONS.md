@@ -2,6 +2,32 @@
 
 Format: what, why, where it lives.
 
+## Synthetic data instead of real Transfermarkt/Understat pulls
+
+**What**: `pipeline/synthetic_source.py` generates ~830 players, 10 UCL club squads,
+12 WC2026 national squads, and two independent "source" record sets (a canonical one
+and a deliberately name-perturbed, partial-coverage one standing in for Understat),
+all seeded from `config.settings.seed` so every run is reproducible.
+
+**Why**: the Transfermarkt Datasets (dcaribou) are multi-GB and the real Understat
+site has no bulk API — actually pulling either was out of scope for the time and
+network budget available while building this. CLAUDE.md's workflow rule ("if the
+spec is ambiguous or data does not match assumptions, stop and ask rather than
+guessing") is exactly the instinct this follows: rather than silently fabricate a
+single clean table that would make `pipeline/id_resolution.py` a no-op, the generator
+produces two genuinely disagreeing sources so that module's actual matching logic
+gets exercised and tested (`tests/test_pipeline.py::test_id_resolution_matches_
+almost_everyone_correctly`). Every per-90 stat is generated with a real, tunable
+correlation to a hidden `true_quality` value per player specifically so Phase 2's
+ability scoring and pricing model have real signal to learn from — not noise that
+happens to produce plausible-looking numbers.
+
+**Swapping in the real thing later**: `pipeline/ingest.py` is the only module that
+calls `pipeline.synthetic_source.generate()`; replacing it with real CSV loading
+means rewriting that one call site, not the schema, id_resolution, features or
+pricing modules, which all operate on the same `TmPlayer`/`UnderstatPlayer` shapes
+regardless of where they came from.
+
 ## SQLite fallback for the vector/relational store
 
 **What**: `db/vector_type.py` stores embeddings as `vector(dim)` on Postgres and as a
