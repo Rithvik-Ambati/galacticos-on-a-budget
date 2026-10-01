@@ -98,6 +98,31 @@ useful implementation of "narration" — it's deterministic and testable, and ev
 number it prints is still the engine's, satisfying `llm/validator.py` trivially. It
 is not a mock standing in for untested code; it is a real, minimal provider.
 
+## Team tactical profiles are derived from squad features, not match events
+
+**What**: `pipeline/team_profiles.py` computes every squad's `attack_channels`, `ppda`,
+`crosses_per_match`, `set_piece_threat`, `aerial` and `danger_players` from its own
+players' ability scores and positions (e.g. a squad heavy on strong left-sided
+attackers gets a higher left-channel emphasis; press intensity comes from the
+midfield/defence group's average ability).
+
+**Why**: DESIGN.md's `team_profiles` table is meant to hold real tactical data mined
+from match events (StatsBomb). There's no event-level data source in this build. The
+heuristic is fully documented in the module itself and produces internally consistent,
+differentiated profiles (verified in `tests/test_graph.py` by opponents actually
+having different formations and danger players session to session) rather than one
+flat placeholder profile reused everywhere.
+
+## LangGraph checkpointer is MemorySaver, not Postgres
+
+**What**: `graph/graph.py::build_graph` uses `langgraph.checkpoint.memory.MemorySaver`.
+
+**Why**: same root cause as the SQLite vector-store decision above — no live Postgres
+in this sandbox to exercise `langgraph.checkpoint.postgres.AsyncPostgresSaver`
+against. It's a one-line swap at `build_graph`'s single call site; no node changes.
+MemorySaver means sessions don't survive a process restart, which is fine for this
+build's own test suite (one process, one run) but not for a real deployment.
+
 ## Formation-change counter moves use a greedy heuristic, not the ILP
 
 **What**: `engine/counter._greedy_lineup_for_formation` picks each slot's best

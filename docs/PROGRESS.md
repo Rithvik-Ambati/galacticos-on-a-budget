@@ -108,7 +108,60 @@ shootout is re-rolled until it produces a winner).
 
 ## Phase 5 — AI layer
 
-*(filled in once built)*
+Built: `pipeline/documents.py` + `pipeline/team_profiles.py` (derives TeamProfile rows
+from squad features -- no match-event source exists, see docs/DECISIONS.md),
+`rag/bm25.py`, `rag/dense.py`, `rag/fusion.py` (RRF), `rag/rerank.py`, `rag/retriever.py`
+(full hybrid pipeline with rewrite-and-retry + fallback), `rag/embeddings.py`,
+`llm/provider.py` (Stub + Anthropic), `llm/narrator.py`, `llm/validator.py`,
+`llm/sql_tool.py`, `graph/state.py`, `graph/nodes.py`, `graph/chat_tools.py`,
+`graph/graph.py`. Checkpointer is `MemorySaver` (docs/DECISIONS.md — no live Postgres
+to test `AsyncPostgresSaver` against).
+
+**Real bugs found and fixed while wiring this together** (in the order hit):
+1. `graph/state.py`'s `GameState` TypedDict didn't declare the key the `validate` node
+   was writing (`_validation_ok`) — LangGraph silently drops updates to undeclared
+   channels, so the router never saw the result and *always* looped back to `build`,
+   even for a perfectly valid lineup. Renamed to a declared `validation_ok` field.
+   Lesson: every key a node returns must be declared on the TypedDict, or the write is
+   silently a no-op — there's no error, just state that never changes.
+2. After a `formation_change` counter move, the opponent's lineup legitimately has a
+   different formation (e.g. 3-5-2's `CB3` slot), but `graph/nodes.py` hard-coded
+   `"4-2-3-1"` when rehydrating the opponent lineup on the *next* round, so
+   `engine/counter.py` crashed with `KeyError: 'CB3'` looking up a slot that doesn't
+   exist in the hard-coded formation. Added `opponent_formation` to `GameState` and
+   threaded it through `draw`/`opponent_counter` instead of hard-coding it.
+3. `llm/validator.py`'s number-extraction regex read a bare `-` as a minus sign
+   anywhere, so `"4-3-3"` (a formation) parsed as `[4, -3, -3]` and `"2-1"` (a score)
+   as `[2, -1]` — both wrong, and both appear in every single narrated report. This
+   made `narrate_coach_report`/`narrate_match_report` fail validation *even with the
+   identity-function StubProvider*, i.e. even when the text couldn't possibly contain
+   an invented number. Fixed by only treating `-` as a sign when it's at the start of
+   the text or after whitespace. Caught immediately because the stub-provider test
+   asserted `result.passed` rather than just checking the text was non-empty — a
+   weaker test would have shipped this silently always-falling-back-to-template.
+4. `_coach_report_allowed_values` didn't include the weakness `evidence` numbers or
+   the formation's own digits, so even after fixing the regex, legitimately-templated
+   numbers like "62" (a threat score) still failed validation. Both bugs together mean
+   the validator was *always* triggering the fallback path for the coach report before
+   this phase's tests were written.
+5. `Bm25Index(doc_ids=[], texts=[])` crashed with `ZeroDivisionError` inside
+   `rank_bm25` (average-doc-length calc divides by corpus size) — an empty corpus is a
+   completely normal state (e.g. documents not built yet), not an edge case to skip
+   testing.
+
+Verified: `python -m pytest tests/test_llm.py tests/test_rag.py -q` (19 tests) plus
+the full `test_graph.py` integration suite below.
+
+## Phase 5b — LangGraph integration (folded into Phase 5)
+
+Three end-to-end tests in `tests/test_graph.py` drive a real `MemorySaver`-checkpointed
+session through every interrupt: draw -> build (resume with an `engine.optimizer`
+-generated, budget-valid lineup) -> validate -> analyse -> narrate_report ->
+user_decision -> lock_in -> simulate -> narrate_match -> chat (resume a question,
+then resume `{"end": True}`) -> graph ends cleanly (`graph.get_state(config).next == ()`).
+A second test drives the counter loop past its 3-round cap and confirms it stops
+there and falls through to `simulate`. A third resumes `build` with a deliberately
+over-budget lineup and confirms it bounces back to `build` rather than proceeding.
 
 ## Phase 6 — API + frontend
 
