@@ -394,17 +394,35 @@ data" covers and wasn't requested.
   discarded) plus a full real-data pipeline re-run (~10 minutes) to test. Given
   Batch B's framing as "polish," this was deferred rather than rushed; the
   honestly-labelled "estimated" fallback is what's shipped.
-- B2 what worked / what didn't (screen 8): `engine/postmatch.py` compares each
-  pre-match def-zone weakness/strength against this match's actual zone-tagged
-  conceded goals vs the pre-match expected share (`POSTMATCH_EXPOSURE_MARGIN_GOALS`
-  in config). Non-def-zone items (press resistance, out-of-position, etc.) are
-  honestly marked `inconclusive` rather than fabricating a zone-level claim the
-  engine can't actually measure. Wired into the `simulate` graph node and
-  `SimulateResponse`/`DecisionResponse`. `tests/test_postmatch.py` (5 tests).
-  **Not yet done**: frontend rendering in `MatchReport.tsx` and its Playwright
-  check — backend-only so far.
-- B3 (animations) and B4 (share): not started.
+- B2 what worked / what didn't (screen 8): done. `engine/postmatch.py` compares
+  each pre-match def-zone weakness/strength against this match's actual
+  zone-tagged conceded goals vs the pre-match expected share
+  (`POSTMATCH_EXPOSURE_MARGIN_GOALS` in config). Non-def-zone items (press
+  resistance, out-of-position, etc.) are honestly marked `inconclusive` rather
+  than fabricating a zone-level claim the engine can't actually measure. Wired
+  into the `simulate` graph node, `SimulateResponse`/`DecisionResponse`, and
+  rendered as a "What Worked / What Didn't" card on `MatchReport.tsx`.
+  `tests/test_postmatch.py` (5 tests) + `frontend/e2e/batch-b.spec.ts`.
+- B3 animations (screens 2 and 7): done. Pure-CSS entrance animations
+  (`.reveal-pop`, `.fade-in-up` in `theme.css`) for the opponent reveal on the
+  draw screen and each match-day timeline event. The timeline's reveal timing
+  itself (one event every 450ms) is driven in `MatchDay.tsx`'s own state, not
+  CSS alone, specifically so the required Skip control has something real to
+  skip — clicking it clears the timer and shows every event immediately.
+  `prefers-reduced-motion` is checked both in CSS (disables the animations) and
+  in JS (skips the staged timing entirely, showing all events on mount).
+  Verified with two Playwright cases: the skip control actually works, and
+  reduced-motion mode shows everything immediately with no skip control
+  rendered at all (nothing to skip).
+- B4 share (screen 8): done, frontend-only, no backend/persistence.
+  `frontend/src/shareCard.ts` builds the plain-text summary ("Copy Result",
+  via `navigator.clipboard.writeText`) and draws the downloadable result image
+  (scoreline, opponent, rating, Man of the Match, manager score) onto a hidden
+  `<canvas>`, exported as a PNG download. Verified with a real clipboard
+  read-back and a real captured download event in
+  `frontend/e2e/batch-b.spec.ts`, not just that the buttons render.
 
-Full suite at this point: 97 passed, `ruff check .` and
-`mypy engine rag llm pipeline db config api evals graph` both clean, frontend
-`tsc --noEmit` clean.
+Batch A and B are both now complete. Final suite: 97 backend tests passed,
+`ruff check .` and `mypy engine rag llm pipeline db config api evals graph` both
+clean, frontend `tsc --noEmit` clean, 6 Playwright tests passed covering every
+new UI element in both batches.

@@ -174,6 +174,19 @@ export interface ManOfTheMatch {
   contributions: PlayerContribution[];
 }
 
+export interface PostMatchItem {
+  type: string;
+  category: "weakness" | "strength";
+  horizontal_zone: string;
+  outcome: "exposed" | "held" | "paid_off" | "unexpectedly_breached" | "inconclusive";
+  evidence: Record<string, number>;
+  description: string;
+}
+
+export interface PostMatchAnalysis {
+  items: PostMatchItem[];
+}
+
 export interface DecisionResponse {
   awaiting: Awaiting;
   counter_round: number | null;
@@ -183,6 +196,7 @@ export interface DecisionResponse {
   simulation: SimulationResult | null;
   match_report_text: string | null;
   man_of_the_match: ManOfTheMatch | null;
+  post_match_analysis: PostMatchAnalysis | null;
 }
 
 export interface SessionStateResponse {

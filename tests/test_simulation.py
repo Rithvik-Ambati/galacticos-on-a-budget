@@ -79,7 +79,9 @@ def test_optimal_lineup_beats_worst_lineup_against_every_opponent_strength() -> 
         optimal_rating = RATING_MODEL.rate(optimal, opponent)
         worst_sim = simulate_match(worst_rating, worst, opponent, runs=4000, seed=1)
         optimal_sim = simulate_match(optimal_rating, optimal, opponent, runs=4000, seed=1)
-        assert optimal_sim.win_pct > worst_sim.win_pct, (opponent.danger_players[0].ability_score, worst_sim.win_pct, optimal_sim.win_pct)
+        assert optimal_sim.win_pct > worst_sim.win_pct, (
+            opponent.danger_players[0].ability_score, worst_sim.win_pct, optimal_sim.win_pct
+        )
         optimal_wins.append(optimal_sim.win_pct)
 
     assert optimal_wins == sorted(optimal_wins, reverse=True), optimal_wins

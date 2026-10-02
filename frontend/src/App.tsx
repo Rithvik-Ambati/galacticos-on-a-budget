@@ -8,7 +8,7 @@ import { MatchReport } from "./screens/MatchReport";
 import { OpponentResponse } from "./screens/OpponentResponse";
 import { Scouting } from "./screens/Scouting";
 import { Welcome } from "./screens/Welcome";
-import type { CounterRoundResult, LineupAnalysis, ManOfTheMatch, PlayerCard, ScoutingResponse, SimulationResult } from "./types";
+import type { CounterRoundResult, LineupAnalysis, ManOfTheMatch, PlayerCard, PostMatchAnalysis, ScoutingResponse, SimulationResult } from "./types";
 
 type Screen = "welcome" | "draw" | "scouting" | "build" | "coach" | "opponent_response" | "match_day" | "match_report";
 
@@ -28,6 +28,7 @@ export default function App() {
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [matchReportText, setMatchReportText] = useState("");
   const [manOfTheMatch, setManOfTheMatch] = useState<ManOfTheMatch | null>(null);
+  const [postMatchAnalysis, setPostMatchAnalysis] = useState<PostMatchAnalysis | null>(null);
   const [counterRound, setCounterRound] = useState(0);
   const [rematchPrefill, setRematchPrefill] = useState<{
     formation: string;
@@ -87,6 +88,7 @@ export default function App() {
       setSimulation(result.simulation);
       setMatchReportText(result.match_report_text ?? "");
       setManOfTheMatch(result.man_of_the_match);
+      setPostMatchAnalysis(result.post_match_analysis);
       setScreen("match_day");
     }
   }
@@ -115,6 +117,7 @@ export default function App() {
       setAnalysis(null);
       setSimulation(null);
       setManOfTheMatch(null);
+      setPostMatchAnalysis(null);
       setCounterRound(0);
       setScreen("build");
     } catch (e) {
@@ -172,6 +175,7 @@ export default function App() {
           matchReportText={matchReportText}
           analysis={analysis}
           manOfTheMatch={manOfTheMatch}
+          postMatchAnalysis={postMatchAnalysis}
           onReplay={resetToWelcome}
           onRematch={handleRematch}
         />

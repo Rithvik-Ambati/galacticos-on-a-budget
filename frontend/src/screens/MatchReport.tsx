@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import * as api from "../api";
-import type { LineupAnalysis, ManOfTheMatch, SimulationResult } from "../types";
+import { buildShareText, downloadCanvasAsPng, drawShareImage } from "../shareCard";
+import type { LineupAnalysis, ManOfTheMatch, PostMatchAnalysis, SimulationResult } from "../types";
 
 interface Props {
   sessionId: string;
@@ -9,9 +10,25 @@ interface Props {
   matchReportText: string;
   analysis: LineupAnalysis;
   manOfTheMatch: ManOfTheMatch | null;
+  postMatchAnalysis: PostMatchAnalysis | null;
   onReplay: () => void;
   onRematch: () => void;
 }
+
+const OUTCOME_LABEL: Record<string, string> = {
+  exposed: "Exposed",
+  held: "Held",
+  paid_off: "Paid off",
+  unexpectedly_breached: "Unexpectedly breached",
+  inconclusive: "Inconclusive",
+};
+const OUTCOME_CLASS: Record<string, string> = {
+  exposed: "red",
+  held: "green",
+  paid_off: "green",
+  unexpectedly_breached: "red",
+  inconclusive: "text-dim2",
+};
 
 interface Message {
   role: "user" | "assistant";
@@ -20,11 +37,33 @@ interface Message {
 
 const SUGGESTIONS = ["Why did we win?", "What are the odds?", "Who are the best rated players?"];
 
-export function MatchReport({ sessionId, opponentName, simulation, matchReportText, analysis, manOfTheMatch, onReplay, onRematch }: Props) {
+export function MatchReport({
+  sessionId, opponentName, simulation, matchReportText, analysis, manOfTheMatch, postMatchAnalysis, onReplay, onRematch,
+}: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [us, them] = simulation.narrative_score;
+
+  async function copyResult() {
+    const text = buildShareText(opponentName, simulation, analysis, manOfTheMatch);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard permission denied or unavailable -- nothing more to do client-side
+    }
+  }
+
+  function downloadImage() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    drawShareImage(canvas, opponentName, simulation, analysis, manOfTheMatch);
+    downloadCanvasAsPng(canvas, `lineup-lab-vs-${opponentName.toLowerCase().replace(/\s+/g, "-")}.png`);
+  }
 
   async function send(question: string) {
     if (!question.trim() || sending) return;
@@ -58,6 +97,12 @@ export function MatchReport({ sessionId, opponentName, simulation, matchReportTe
           <div className="text-dim2">You {us} — {them} {opponentName} · Full Time</div>
         </div>
         <div className="row" style={{ gap: 10 }}>
+          <button className="btn btn-ghost" data-testid="copy-result-button" onClick={copyResult}>
+            {copied ? "Copied ✓" : "Copy Result"}
+          </button>
+          <button className="btn btn-ghost" data-testid="download-image-button" onClick={downloadImage}>
+            Download Image
+          </button>
           <button className="btn btn-outline" data-testid="play-again-button" onClick={onRematch}>
             Play Again vs {opponentName}
           </button>
@@ -66,6 +111,7 @@ export function MatchReport({ sessionId, opponentName, simulation, matchReportTe
           </button>
         </div>
       </div>
+      <canvas ref={canvasRef} style={{ display: "none" }} aria-hidden="true" />
 
       <div className="row" style={{ alignItems: "flex-start", gap: 20 }}>
         <div className="col" style={{ width: 460 }}>
@@ -98,6 +144,21 @@ export function MatchReport({ sessionId, opponentName, simulation, matchReportTe
               {Math.round(analysis.manager_score.manager_score * 100)}%
             </div>
           </div>
+          {postMatchAnalysis && postMatchAnalysis.items.length > 0 && (
+            <div className="card" data-testid="post-match-analysis">
+              <div className="headline" style={{ fontSize: 14, marginBottom: 10 }}>What Worked / What Didn't</div>
+              <div className="col" style={{ gap: 8 }}>
+                {postMatchAnalysis.items.map((item, i) => (
+                  <div key={i} className="spread" style={{ background: "var(--surface-2)", borderRadius: 10, padding: "8px 12px" }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>{item.type.replace(/_/g, " ")}</span>
+                    <span className={OUTCOME_CLASS[item.outcome]} style={{ fontSize: 12, fontWeight: 700 }}>
+                      {OUTCOME_LABEL[item.outcome]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="card col" style={{ flex: 1, height: 560 }}>

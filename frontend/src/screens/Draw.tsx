@@ -20,7 +20,7 @@ export function Draw({ opponentName, onContinue }: Props) {
           <div className="headline">Your XI</div>
         </div>
         <div className="headline text-dim2" style={{ fontSize: 32 }}>VS</div>
-        <div className="col" style={{ alignItems: "center" }}>
+        <div className="col reveal-pop" style={{ alignItems: "center" }} data-testid="opponent-reveal">
           <div
             className="card"
             style={{ width: 120, height: 120, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", borderColor: "var(--gold)" }}

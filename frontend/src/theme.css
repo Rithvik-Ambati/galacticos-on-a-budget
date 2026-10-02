@@ -342,3 +342,24 @@ input[type="text"] {
   padding: 10px 16px;
   font-size: 13px;
 }
+
+/* Screen 2 (draw reveal) and screen 7 (match-day event reveal) animations. Both are
+   pure CSS entrances -- MatchDay.tsx controls the per-event *timing* in JS (so
+   there's something real for its Skip control to skip), this just supplies how each
+   newly-visible element enters. */
+@keyframes reveal-pop {
+  from { opacity: 0; transform: scale(0.75); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.reveal-pop { animation: reveal-pop 0.45s ease-out; }
+.fade-in-up { animation: fade-in-up 0.25s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-pop, .fade-in-up {
+    animation: none;
+  }
+}
