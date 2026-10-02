@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import os
+
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+# DATA_SOURCE now defaults to "real" (docs/DECISIONS.md "Synthetic data is no longer
+# the silent default") -- tests opt into synthetic explicitly so they don't need
+# data_raw/ in CI.
+os.environ["DATA_SOURCE"] = "synthetic"
 
 from evals.numeric_eval import run_numeric_eval
 from evals.retrieval_eval import GoldenQuery, load_golden, run_retrieval_eval

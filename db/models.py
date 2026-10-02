@@ -170,6 +170,23 @@ class GameSession(Base):
     )
 
 
+class IngestMetadata(Base):
+    """One row per `pipeline.run_all` run (docs/DECISIONS.md "Synthetic data is no
+    longer the silent default"): api/main.py's startup refuses to boot without at
+    least one row here, and shows a persistent demo-data banner when the most
+    recent row's data_source is "synthetic" -- a player must never be able to draw
+    a fictional opponent without the app saying so."""
+
+    __tablename__ = "ingest_metadata"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    data_source: Mapped[str] = mapped_column(String(16))  # "real" | "synthetic"
+    dataset_snapshot_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pipeline_run_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(dt.UTC)
+    )
+
+
 class EvalRun(Base):
     __tablename__ = "eval_runs"
 

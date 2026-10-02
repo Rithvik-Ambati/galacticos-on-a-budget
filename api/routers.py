@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,8 +85,13 @@ async def _get_session_row(session: AsyncSession, session_id: str) -> GameSessio
 
 
 @router.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health(request: Request) -> dict[str, object]:
+    return {
+        "status": "ok",
+        "data_source": getattr(request.app.state, "data_source", None),
+        "dataset_snapshot_date": getattr(request.app.state, "dataset_snapshot_date", None),
+        "pipeline_run_at": getattr(request.app.state, "pipeline_run_at", None),
+    }
 
 
 @router.post("/sessions", response_model=CreateSessionResponse)

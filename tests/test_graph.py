@@ -4,11 +4,18 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from config.game import COUNTER_MAX_ROUNDS
+# DATA_SOURCE now defaults to "real" (docs/DECISIONS.md "Synthetic data is no longer
+# the silent default") -- tests opt into synthetic explicitly so they don't need
+# data_raw/ in CI.
+os.environ["DATA_SOURCE"] = "synthetic"
+
+from config.game import COUNTER_MAX_ROUNDS  # noqa: E402
 from engine.optimizer import find_optimal_lineup
 from graph.graph import build_graph
 from pipeline.features import compute_features

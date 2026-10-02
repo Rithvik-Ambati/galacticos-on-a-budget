@@ -321,3 +321,47 @@ constraints over a huge candidate pool) that needs a real solver; re-fielding a 
 the opponent already owns, with no such constraints, doesn't. Phase 4's 1-second
 per-round performance budget made the greedy heuristic the right trade — it's not a
 claim of global optimality, and the docstring says so.
+
+## Synthetic data is no longer the silent default
+
+**What**: `pipeline/data_source.py::resolve_source_name()` now defaults to `"real"`;
+`DATA_SOURCE=synthetic` must be set explicitly to get fictional players. Every
+`pipeline.run_all` run writes a row to the new `ingest_metadata` table (data source,
+real-dataset snapshot date if applicable, run timestamp). `api/main.py`'s `lifespan`
+refuses to start the API at all if that table is empty (`NotIngestedError`, a clear
+message to run the pipeline), and otherwise exposes the most recent row's
+`data_source` on `/health` and `app.state`. The frontend shows a persistent "DEMO
+DATA — fictional players, not a real opponent" banner on every screen whenever
+`/health` reports `"synthetic"`.
+
+**Why**: audited every synthetic-data code path (docs/PROGRESS.md Part 2a) and found
+that `pipeline/data_source.py` previously defaulted to synthetic, meaning the
+project's own primary documented setup command (`python -m pipeline.run_all`, no
+env var) silently produced a fully-fictional game with zero in-app indication —
+violating "real gameplay must only ever use real squads." `engine/demo_fixtures.py`'s
+Brazil scenario was audited too and is genuinely isolated (only `engine/analyse.py`'s
+CLI demo and test files import it; never `graph/`, `api/`, or `pipeline/ingest.py`),
+so it needed no change.
+
+**CI/test suite guard**: every test module that calls `run_ingest` now sets
+`DATA_SOURCE=synthetic` explicitly at import time (`tests/test_api.py`,
+`test_evals.py`, `test_graph.py`, `test_rag.py`) — nothing relies on the new
+default, so CI never needs `data_raw/`. `.github/workflows/ci.yml` and
+`nightly-eval.yml` set it at the job level for the same reason;
+`weekly-pipeline.yml` deliberately leaves it unset (refreshing production *should*
+use real data) and now runs `pipeline.download_real_data` first.
+
+**Tests**: `tests/test_lifespan.py` — the metadata-lookup helper directly (empty
+table, most-recent-row-wins), and `lifespan()` itself end-to-end against an isolated
+engine (refuses to start with no metadata; exposes `data_source` on `app.state` when
+present). `frontend/e2e/data-source.spec.ts` — a real re-seed with
+`DATA_SOURCE=synthetic` confirms the banner actually renders, on more than one
+screen.
+
+## Known limitations
+
+midfield_control, cohesion and balance (36% of overall rating) do not feed expected
+goals. Rating and simulated win% can disagree for manual lineup edits (5-7
+non-monotonic steps of 17 within the realistic band, confirmed with common random
+numbers). The swap optimizer is unaffected (0/20). Planned fix: rating v2 derives
+the overall rating from the predicted xG margin (Part 6).

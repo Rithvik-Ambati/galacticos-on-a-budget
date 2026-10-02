@@ -15,6 +15,10 @@ import tempfile
 _TEST_DB_PATH = os.path.join(tempfile.mkdtemp(prefix="lineuplab_api_test_"), "test.db")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
 os.environ["LLM_PROVIDER"] = "stub"
+# DATA_SOURCE now defaults to "real" (docs/DECISIONS.md "Synthetic data is no longer
+# the silent default") -- tests must opt into synthetic explicitly, never rely on
+# the default, so they don't require data_raw/ to exist in CI.
+os.environ["DATA_SOURCE"] = "synthetic"
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
@@ -70,7 +74,14 @@ async def _build_optimal_assignments(opponent_team_id: str) -> dict[str, str]:
 async def test_health(client: httpx.AsyncClient) -> None:
     r = await client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    body = r.json()
+    assert body["status"] == "ok"
+    # httpx's ASGITransport doesn't drive FastAPI's lifespan (see
+    # test_lifespan.py for a direct test of the startup guard/data_source fields
+    # themselves) -- this just confirms the shape /health promises to the frontend.
+    assert "data_source" in body
+    assert "dataset_snapshot_date" in body
+    assert "pipeline_run_at" in body
 
 
 async def test_unknown_session_is_404(client: httpx.AsyncClient) -> None:

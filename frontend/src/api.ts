@@ -22,6 +22,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface HealthResponse {
+  status: string;
+  data_source: string | null;
+  dataset_snapshot_date: string | null;
+  pipeline_run_at: string | null;
+}
+
+export function health() {
+  return request<HealthResponse>("/health");
+}
+
 export function createSession(mode: "wc" | "ucl") {
   return request<{ session_id: string; mode: string }>("/sessions", {
     method: "POST",

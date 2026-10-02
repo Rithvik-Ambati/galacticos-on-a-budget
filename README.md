@@ -53,10 +53,8 @@ untested live.
 ```bash
 # backend — uses SQLite by default (config/settings.py); no Docker needed
 pip install -e ".[dev,eval]"
-python -m pipeline.run_all        # seeds dev.db: synthetic players, prices, team
-                                   # profiles, embedded documents
-# or, against real player data (see "Real data" below):
-#   python -m pipeline.download_real_data && DATA_SOURCE=real python -m pipeline.run_all
+python -m pipeline.download_real_data   # fetches the real dataset into data_raw/ (241MB, once)
+python -m pipeline.run_all              # seeds dev.db -- DATA_SOURCE defaults to "real"
 uvicorn api.main:app --reload --port 8000
 
 # frontend, in a second shell
@@ -64,6 +62,15 @@ cd frontend
 npm install
 npm run dev                        # http://localhost:5173, proxies /api to :8000
 ```
+
+**Dev/test mode (synthetic, fictional players)**: set `DATA_SOURCE=synthetic`
+before `pipeline.run_all` — faster (no 241MB download), and what the whole test
+suite runs against. The app refuses to hide this from you: `/health` reports
+`data_source: "synthetic"` and every screen shows a persistent "DEMO DATA" banner
+whenever the seeded database isn't real (`docs/DECISIONS.md` "Synthetic data is no
+longer the silent default"). The API also refuses to start at all against a
+database the pipeline has never been run against, rather than silently serving
+empty tables.
 
 With a real Postgres available: set `DATABASE_URL` in `.env` (see `.env.example`),
 `make up && make migrate` instead of letting SQLite auto-create tables, then the same
@@ -101,22 +108,24 @@ market value, in line with the synthetic number) and ability scores spanning 4.1
 
 ## Real data
 
-`DATA_SOURCE=real` swaps the whole pipeline onto the real, public
+The pipeline defaults to the real, public
 [dcaribou/transfermarkt-datasets](https://github.com/dcaribou/transfermarkt-datasets)
-export (CC0) instead of the synthetic generator — real players, real nationalities,
-real market values, real WC2026/UCL2025-26 squads and minutes/goals/assists. Run
+export (CC0) — real players, real nationalities, real market values, real
+WC2026/UCL2025-26 squads and minutes/goals/assists. Run
 `python -m pipeline.download_real_data` once first (fetches a 241MB zip into
 `data_raw/`, gitignored). `xg`/`xa` and a handful of advanced per-90s are still
 approximated, since this export has no shot-quality data — see
 `pipeline/real_source.py`'s docstring and `docs/PROGRESS.md` Phase 8 for exactly
-what's real and what's derived.
+what's real and what's derived. `DATA_SOURCE=synthetic` switches to the fictional
+generator instead (dev/test only — see "How to run it" above).
 
 ## Key design decisions (full detail in `docs/DECISIONS.md`)
 
-- **Synthetic Transfermarkt/Understat data by default**, not the real sources — two
+- **Real data by default**; synthetic Transfermarkt/Understat data (two
   deliberately-disagreeing record sets so `pipeline/id_resolution.py` does real
-  fuzzy-matching work instead of a no-op. `DATA_SOURCE=real` (see above) swaps in the
-  real thing; the test suite still runs against synthetic.
+  fuzzy-matching work instead of a no-op) is an explicit `DATA_SOURCE=synthetic`
+  opt-in, used by the test suite and CI (never the production default — see
+  `docs/DECISIONS.md` "Synthetic data is no longer the silent default").
 - **SQLite fallback** behind the same `VectorType`/`DATABASE_URL` the Postgres path
   uses, because there was no live Postgres to develop against.
 - **LangGraph + `MemorySaver`**, not the Postgres checkpointer — sessions don't

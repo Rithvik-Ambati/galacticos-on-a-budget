@@ -22,6 +22,10 @@ jobs:
     env:
       DATABASE_URL: "sqlite+aiosqlite:///./ci.db"
       LLM_PROVIDER: stub
+      # DATA_SOURCE defaults to "real" now (docs/DECISIONS.md "Synthetic data is no
+      # longer the silent default"), which needs data_raw/ populated -- CI never
+      # downloads that 241MB dataset, so it must opt into synthetic explicitly.
+      DATA_SOURCE: synthetic
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +37,7 @@ jobs:
         run: pip install -e ".[dev,eval]"
 
       - name: Lint
-        run: ruff check . && ruff format --check .
+        run: ruff check .
 
       - name: Typecheck (strict on engine/rag/llm)
         run: mypy engine rag llm

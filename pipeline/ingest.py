@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from db.bootstrap import create_all
-from db.models import Club, NationalTeam, Player, PlayerIdMap, PlayerStatsSeason, Squad
-from pipeline import data_source, id_resolution
+from db.models import Club, IngestMetadata, NationalTeam, Player, PlayerIdMap, PlayerStatsSeason, Squad
+from pipeline import data_source, id_resolution, real_source
 
 TOP_LEAGUE_COEFFICIENT = 1.0
 OTHER_LEAGUE_COEFFICIENT = 0.82
@@ -41,6 +41,7 @@ async def run_ingest(engine: AsyncEngine, *, seed: int | None = None, output_dir
     os.makedirs(output_dir, exist_ok=True)
     await create_all(engine)
 
+    source_name = data_source.resolve_source_name()
     world = data_source.generate(seed=seed)
     matches, unresolved = id_resolution.resolve(world.tm_players, world.understat_players, world.clubs)
 
@@ -164,6 +165,19 @@ async def run_ingest(engine: AsyncEngine, *, seed: int | None = None, output_dir
                 )
             )
         session.add_all(stats_rows)
+
+        # Written on every run, real or synthetic (docs/DECISIONS.md "Synthetic data
+        # is no longer the silent default") -- api/main.py's startup refuses to boot
+        # without at least one row here, and the frontend shows a persistent demo
+        # banner whenever the most recent row says "synthetic".
+        session.add(
+            IngestMetadata(
+                data_source=source_name,
+                dataset_snapshot_date=(
+                    real_source.DATASET_SNAPSHOT_DATE.isoformat() if source_name == "real" else None
+                ),
+            )
+        )
 
         await session.commit()
 

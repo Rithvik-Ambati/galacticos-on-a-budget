@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "./api";
 import { BuildXI } from "./screens/BuildXI";
 import { CoachReport } from "./screens/CoachReport";
@@ -14,6 +14,7 @@ type Screen = "welcome" | "draw" | "scouting" | "build" | "coach" | "opponent_re
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("welcome");
+  const [isDemoData, setIsDemoData] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [opponentName, setOpponentName] = useState("");
   const [scouting, setScouting] = useState<ScoutingResponse | null>(null);
@@ -35,6 +36,12 @@ export default function App() {
     assignments: Record<string, string>;
     playersById: Record<string, PlayerCard>;
   } | null>(null);
+
+  useEffect(() => {
+    api.health()
+      .then((res) => setIsDemoData(res.data_source === "synthetic"))
+      .catch(() => setIsDemoData(false));
+  }, []);
 
   async function startGame(mode: "wc" | "ucl") {
     setBusy(true);
@@ -127,6 +134,17 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {isDemoData && (
+        <div
+          data-testid="demo-data-banner"
+          style={{
+            background: "var(--gold)", color: "#1a1206", fontWeight: 700, fontSize: 13,
+            textAlign: "center", padding: "8px 16px", letterSpacing: "0.04em",
+          }}
+        >
+          DEMO DATA — fictional players, not a real opponent
+        </div>
+      )}
       {screen === "welcome" && <Welcome onStart={startGame} busy={busy} />}
 
       {screen === "draw" && <Draw opponentName={opponentName} onContinue={goToScouting} />}

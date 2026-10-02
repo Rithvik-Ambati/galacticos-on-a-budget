@@ -40,6 +40,12 @@ BIG5_COMPETITION_IDS = {"GB1", "ES1", "L1", "IT1", "FR1"}
 RECENT_SEASONS = {"2025", "2026"}
 APPEARANCE_LOOKBACK_DAYS = 440  # ~ last full season + a bit, from the dataset's max date
 
+# The dcaribou export's own max appearances.csv date, confirmed by direct inspection
+# (docs/PROGRESS.md Phase 6c). Not a download timestamp -- the actual freshness of
+# the underlying data -- so pipeline/data_source.py records this in ingest_metadata
+# rather than "whenever someone happened to run the pipeline."
+DATASET_SNAPSHOT_DATE = date(2026, 6, 28)
+
 POSITION_GROUP_BY_TM_POSITION = {
     "Goalkeeper": "GK",
     "Defender": "DF",
@@ -329,7 +335,7 @@ def _aggregate_real_stats(
     wanted_ids = set(tm_by_id)
 
     totals: dict[str, dict[str, int]] = {}
-    cutoff = date(2026, 6, 28).toordinal() - APPEARANCE_LOOKBACK_DAYS
+    cutoff = DATASET_SNAPSHOT_DATE.toordinal() - APPEARANCE_LOOKBACK_DAYS
     with _open(data_dir, "appearances.csv.gz") as f:
         for row in csv.DictReader(f):
             pid = row["player_id"]

@@ -426,3 +426,51 @@ Batch A and B are both now complete. Final suite: 97 backend tests passed,
 `ruff check .` and `mypy engine rag llm pipeline db config api evals graph` both
 clean, frontend `tsc --noEmit` clean, 6 Playwright tests passed covering every
 new UI element in both batches.
+
+## v1 completion — GitHub publish
+
+Published to https://github.com/Rithvik-Ambati/galacticos-on-a-budget. Secret scan
+(full history + working tree) clean before the first push; no files over 10MB
+anywhere in history. Branch renamed `master` -> `main`. `.gitignore` hardened,
+`.env.example` completed, Makefile's `typecheck`/`lint` targets fixed to match what
+was actually being run all along (see `docs/DECISIONS.md` for why `ruff format
+--check .` was dropped rather than reformatting 45 of 92 files as a surprise).
+
+**Rating work (candidate C + coherence check)**: confirmed already committed and
+complete from the prior session, with evidence that it was run on real opponents
+throughout (every diagnostic script explicitly set `DATA_SOURCE=real` before
+ingesting, never relying on a default) — no re-run needed. Full numbers in
+`docs/DECISIONS.md` "Rating/simulation rebalance, pass 2."
+
+### Part 2a — synthetic squads audit and the "no silent fake data" guard
+
+Audited every code path that could put a synthetic player in front of a real
+player: only `pipeline/data_source.py`'s default was the problem (it silently fell
+back to the fictional generator), not `engine/demo_fixtures.py` (confirmed
+genuinely test/demo-only — never imported by `graph/`, `api/`, or
+`pipeline/ingest.py`). Reported this before changing anything, per instruction;
+approved fix (option 1 + guards) implemented:
+
+- `DATA_SOURCE` now defaults to `"real"`; `DATA_SOURCE=synthetic` is an explicit
+  opt-in.
+- New `ingest_metadata` table (migration `0002_ingest_metadata`): every
+  `pipeline.run_all` run records its data source, the real dataset's snapshot date
+  (when applicable), and a run timestamp.
+- `api/main.py`'s `lifespan` refuses to start the API at all if that table is
+  empty (`NotIngestedError`, with a clear message), and otherwise exposes the
+  latest row's `data_source` on `/health` and `app.state`.
+- The frontend shows a persistent "DEMO DATA — fictional players, not a real
+  opponent" banner on every screen whenever `/health` reports `"synthetic"`.
+- Every test module that calls `run_ingest` (`test_api.py`, `test_evals.py`,
+  `test_graph.py`, `test_rag.py`) now sets `DATA_SOURCE=synthetic` explicitly, and
+  so do `ci.yml`/`nightly-eval.yml`; `weekly-pipeline.yml` deliberately leaves it
+  unset (production refresh should be real) and now downloads the dataset first.
+- README's primary setup path is now the real-data one; synthetic is documented as
+  the dev/test option.
+
+**Tests**: `tests/test_lifespan.py` (4 new — metadata-lookup helper directly, and
+`lifespan()` end-to-end against an isolated engine, both for the empty-table and
+present-metadata cases) + `frontend/e2e/data-source.spec.ts` (a real re-seed with
+`DATA_SOURCE=synthetic` confirms the banner actually renders, not just that the
+component code exists). Full suite: 101 backend tests, ruff/mypy clean, 7
+Playwright tests.

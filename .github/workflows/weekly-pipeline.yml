@@ -2,9 +2,10 @@ name: Weekly data pipeline
 
 # docs/DESIGN.md section 14: "scheduled weekly pipeline job" -- refreshes player
 # stats, prices and documents against the production database. Authored, never run:
-# this needs real Transfermarkt/Understat ingestion (pipeline/synthetic_source.py is
-# a stand-in, see docs/DECISIONS.md) and a reachable production DATABASE_URL secret,
-# neither of which exist yet.
+# real Transfermarkt ingestion exists now (pipeline/real_source.py, docs/DECISIONS.md
+# "real data integration"), and DATA_SOURCE defaults to "real" as of this phase, so
+# this just needs the dataset downloaded first and a reachable production
+# DATABASE_URL secret, which doesn't exist yet (no deployment, by instruction).
 
 on:
   schedule:
@@ -23,4 +24,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .
+      - run: python -m pipeline.download_real_data
       - run: python -m pipeline.run_all

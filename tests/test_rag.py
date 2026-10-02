@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import os
+
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+# DATA_SOURCE now defaults to "real" (docs/DECISIONS.md "Synthetic data is no longer
+# the silent default") -- tests opt into synthetic explicitly so they don't need
+# data_raw/ in CI.
+os.environ["DATA_SOURCE"] = "synthetic"
 
 from pipeline.documents import build_opponent_documents, build_player_documents
 from pipeline.features import compute_features
