@@ -22,6 +22,7 @@ class GameState(TypedDict, total=False):
     opponent_team_id: str
     opponent_formation: str
     opponent_lineup_assignments: dict[str, str]  # slot_id -> player_id, opponent's XI
+    opponent_out_of_position: list[dict[str, object]]  # Part 2b: thin-squad fallback fills
     formation: str
     lineup_assignments: dict[str, str]  # slot_id -> player_id, the user's XI
     budget_left_eur: int

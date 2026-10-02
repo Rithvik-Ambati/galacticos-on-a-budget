@@ -12,6 +12,34 @@ BUDGET_EUR: int = 1_000_000_000
 NATIONALITY_LIMIT: int = 3
 SQUAD_SIZE: int = 11
 
+# engine/opponent_lineup.py (Part 2b, docs/DECISIONS.md "Thin squads"): the
+# opponent's fixed 4-2-3-1 XI, as (native_group, position_code) per slot --
+# position_code feeds role_fit_score when a slot has to be filled out of position.
+OPPONENT_FORMATION_SLOTS: dict[str, tuple[str, str]] = {
+    "GK": ("GK", "GK"),
+    "LB": ("DF", "LB"),
+    "CB1": ("DF", "CB"),
+    "CB2": ("DF", "CB"),
+    "RB": ("DF", "RB"),
+    "DM1": ("MF", "DM"),
+    "DM2": ("MF", "DM"),
+    "LAM": ("MF", "AM"),
+    "CAM": ("MF", "AM"),
+    "RAM": ("MF", "AM"),
+    "ST": ("FW", "ST"),
+}
+# Nearest-group fallback order when a squad is too thin at a slot's native group --
+# "DM for CB, winger for FB" per instruction: defensive slots reach into midfield
+# before attack, attacking slots reach into midfield before defence, and midfield
+# slots are agnostic between the two (DF tends to have more depth in a real squad
+# than FW, so it's tried first as the softer fallback).
+POSITION_GROUP_FALLBACK_CHAIN: dict[str, tuple[str, ...]] = {
+    "GK": ("GK", "DF"),
+    "DF": ("DF", "MF", "FW"),
+    "MF": ("MF", "DF", "FW"),
+    "FW": ("FW", "MF", "DF"),
+}
+
 PRICE_FLOOR_EUR: int = 1_000_000
 PRICE_ROUND_EUR: int = 1_000_000
 PRICING_ABILITY_WEIGHT: float = 0.7

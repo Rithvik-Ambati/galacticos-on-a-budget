@@ -137,6 +137,13 @@ export interface ScoutingResponse {
   opponent_formation: string;
   opponent_lineup: Record<string, PlayerCard>;
   lineup_source: string;
+  out_of_position: {
+    slot_id: string;
+    player_id: string;
+    player_name: string;
+    natural_group: string;
+    assigned_position_code: string;
+  }[];
 }
 
 export type Awaiting = "lineup" | "decision" | "question" | null;

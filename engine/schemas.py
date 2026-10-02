@@ -124,6 +124,24 @@ class OpponentWeakZone(BaseModel):
     description: str = ""
 
 
+class OutOfPositionFill(BaseModel):
+    """Part 2b (docs/DECISIONS.md "Thin squads"): a slot in the opponent's own XI
+    that a too-thin squad could only fill from a non-native position group --
+    shown on the scouting report, same spirit as the user's own out-of-position
+    weakness (engine/weaknesses.py)."""
+
+    slot_id: str
+    player_id: str
+    player_name: str
+    natural_group: str
+    assigned_position_code: str
+
+
+class OpponentLineupResult(BaseModel):
+    assignments: dict[str, str]  # slot_id -> player_id
+    out_of_position: list[OutOfPositionFill] = Field(default_factory=list)
+
+
 class SwapSuggestion(BaseModel):
     weakness_type: str | None
     out_slot: str

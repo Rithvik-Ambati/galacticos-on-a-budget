@@ -474,3 +474,38 @@ present-metadata cases) + `frontend/e2e/data-source.spec.ts` (a real re-seed wit
 `DATA_SOURCE=synthetic` confirms the banner actually renders, not just that the
 component code exists). Full suite: 101 backend tests, ruff/mypy clean, 7
 Playwright tests.
+
+### Part 2b — thin squads always field exactly 11
+
+`engine/opponent_lineup.py::build_opponent_lineup` (full detail in
+`docs/DECISIONS.md` "Thin squads always field exactly 11, with fallback tracked
+and shown"). Fills thin position groups from the nearest adjacent group, tracks
+every out-of-position fill, and the scouting report shows them. `graph/nodes.py`'s
+`draw()` excludes (and logs) any squad that can't field 11 even with fallback.
+
+**A real bug found and fixed along the way, not introduced by this change**:
+`draw()`'s UCL candidate query selected every row in the `clubs` table (~490 —
+every club any real player happens to play for) instead of the 36 clubs that
+actually have a squad, giving roughly a 93% chance of drawing a 0-player opponent
+in UCL mode. Fixed by querying `Squad.team_id` (filtered by `tournament`) directly.
+
+**Audit, real data, both modes**:
+
+| Mode | Fieldable (of real candidates) | Excluded | Needed >=1 fallback fill | Total fills |
+|---|---|---|---|---|
+| WC2026 (national teams) | 43 / 43 | 0 | 3 | 4 |
+| UCL2025-26 (clubs) | 36 / 36 | 0 | 2 | 2 |
+
+(5 of the 48 real WC2026 teams and ~454 of the ~490 clubs `real_source.py`
+references have no squad at all in this dataset — never real candidates, not a
+Part 2b exclusion; see Phase 8/6c Part 2a.)
+
+**Tests**: `tests/test_opponent_lineup.py` — 3 unit tests (fallback chain fires,
+no fallback needed when a squad has full depth, returns `None` when genuinely too
+thin) plus the requested property test: for every team in both modes the
+synthetic seed makes fieldable, the built XI has exactly the 11 formation slots,
+all distinct real squad members. 105 backend tests passing, ruff/mypy clean.
+No dedicated Playwright check was added for the (rare -- 3/43, 2/36) scouting-page
+out-of-position banner specifically; the existing Batch A/B Playwright suite
+already exercises `draw()`/Scouting repeatedly and would catch a crash, but
+doesn't force the banner's specific content to appear.

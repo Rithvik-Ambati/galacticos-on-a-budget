@@ -8,6 +8,7 @@ engine/ itself never touches the DB directly.
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import Any
 
@@ -17,10 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine as SAAsyncEngine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config.game import COUNTER_MAX_ROUNDS
-from db.models import Club, NationalTeam
+from db.models import Squad
 from engine.analyse import build_analysis
 from engine.counter import run_counter_round
 from engine.motm import man_of_the_match
+from engine.opponent_lineup import build_opponent_lineup
 from engine.postmatch import analyse_post_match
 from engine.rating import get_default_rating_model
 from engine.rules import validate_lineup
@@ -37,6 +39,8 @@ from pipeline.to_engine import (
     load_team_name,
     load_team_profile,
 )
+
+logger = logging.getLogger(__name__)
 
 TOURNAMENT_BY_MODE = {"wc": "WC2026", "ucl": "UCL2026"}
 
@@ -67,43 +71,54 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     rating_model = get_default_rating_model()
     provider = get_provider()
+    # Process-lifetime cache: which team_ids can field a full 11 (docs/DECISIONS.md
+    # "Thin squads"). Squads don't change at runtime, so this is computed at most
+    # once per team_id per process rather than on every single draw() call.
+    _fieldable_cache: dict[str, bool] = {}
+
+    async def _can_field_eleven(session: AsyncSession, team_id: str) -> bool:
+        if team_id not in _fieldable_cache:
+            squad = await load_squad_player_cards(session, team_id)
+            result = build_opponent_lineup(squad)
+            _fieldable_cache[team_id] = result is not None
+            if result is None:
+                logger.warning(
+                    "excluding %s from draw(): squad of %d can't field 11 even with "
+                    "position-group fallback", team_id, len(squad),
+                )
+        return _fieldable_cache[team_id]
 
     async def draw(state: GameState) -> dict[str, Any]:
         tournament = TOURNAMENT_BY_MODE[state["mode"]]
         async with session_factory() as session:
-            if tournament == "WC2026":
-                teams = (await session.execute(select(NationalTeam.team_id))).scalars().all()
-            else:
-                teams = (await session.execute(select(Club.club_id))).scalars().all()
+            # Squad.tournament, not Club/NationalTeam directly: those tables also
+            # hold every other real club/team a candidate player happens to be
+            # linked to (docs/DECISIONS.md "Thin squads" -- e.g. real_source.py's
+            # ~490 referenced clubs vs. the 36 actually drawable UCL ones), which
+            # has no Squad row at all and previously left draw() picking a team
+            # with zero players most of the time in UCL mode.
+            teams = (
+                await session.execute(select(Squad.team_id).where(Squad.tournament == tournament).distinct())
+            ).scalars().all()
+            fieldable_teams = [t for t in sorted(teams) if await _can_field_eleven(session, t)]
+
         fixed = state.get("fixed_opponent_team_id")
-        if fixed and fixed in teams:
+        if fixed and fixed in fieldable_teams:
             opponent_team_id = fixed
         else:
             rng = random.Random(f"{state['session_id']}:{seed}")
-            opponent_team_id = rng.choice(sorted(teams))
+            opponent_team_id = rng.choice(fieldable_teams)
 
         async with session_factory() as session:
             squad = await load_squad_player_cards(session, opponent_team_id)
-        by_group: dict[str, list[PlayerCard]] = {}
-        for c in squad:
-            by_group.setdefault(c.position_group, []).append(c)
-        opponent_formation_slots = {
-            "GK": ("GK", 1), "RB": ("DF", 1), "CB1": ("DF", 1), "CB2": ("DF", 1), "LB": ("DF", 1),
-            "DM1": ("MF", 1), "DM2": ("MF", 1), "LAM": ("MF", 1), "CAM": ("MF", 1), "RAM": ("MF", 1),
-            "ST": ("FW", 1),
-        }
-        assignments: dict[str, str] = {}
-        used: set[str] = set()
-        for slot_id, (group, _n) in opponent_formation_slots.items():
-            pool = sorted((c for c in by_group.get(group, []) if c.player_id not in used), key=lambda c: -c.ability_score)
-            if pool:
-                assignments[slot_id] = pool[0].player_id
-                used.add(pool[0].player_id)
+        lineup_result = build_opponent_lineup(squad)
+        assert lineup_result is not None  # guaranteed by the fieldable_teams filter above
 
         return {
             "opponent_team_id": opponent_team_id,
             "opponent_formation": OPPONENT_INITIAL_FORMATION,
-            "opponent_lineup_assignments": assignments,
+            "opponent_lineup_assignments": lineup_result.assignments,
+            "opponent_out_of_position": [f.model_dump() for f in lineup_result.out_of_position],
             "counter_round": 0,
             "counter_history": [],
         }

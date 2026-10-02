@@ -202,6 +202,7 @@ async def scout(session_id: str, session: AsyncSession = Depends(get_session)) -
         opponent_formation=opponent_formation,
         opponent_lineup=opponent_lineup,
         lineup_source="estimated",
+        out_of_position=state.get("opponent_out_of_position", []),
     )
 
 

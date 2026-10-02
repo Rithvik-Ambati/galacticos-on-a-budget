@@ -51,6 +51,7 @@ class ScoutingResponse(BaseModel):
     opponent_formation: str
     opponent_lineup: dict[str, PlayerCard]  # slot_id -> card; the SAME XI rating/counter/simulate use
     lineup_source: str  # "estimated" (squad's best XI by ability) -- see docs/DECISIONS.md
+    out_of_position: list[dict[str, object]] = []  # Part 2b: thin-squad fallback fills
 
 
 class PlayerSearchResult(BaseModel):

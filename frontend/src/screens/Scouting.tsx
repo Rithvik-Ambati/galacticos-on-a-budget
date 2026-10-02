@@ -29,6 +29,16 @@ export function Scouting({ opponentName, scouting, onContinue }: Props) {
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }} data-testid="opponent-lineup">
             <Pitch formation={scouting.opponent_formation} assignments={scouting.opponent_lineup} />
           </div>
+          {scouting.out_of_position.length > 0 && (
+            <div className="col" data-testid="out-of-position" style={{ marginBottom: 16, gap: 4 }}>
+              {scouting.out_of_position.map((fill) => (
+                <div key={fill.slot_id} className="text-dim2" style={{ fontSize: 11 }}>
+                  ⚠ {fill.player_name} ({fill.natural_group}) is playing out of position at{" "}
+                  {fill.assigned_position_code} — squad too thin there
+                </div>
+              ))}
+            </div>
+          )}
           <div className="headline" style={{ fontSize: 15, marginBottom: 14 }}>Tactical Profile</div>
           <div className="col">
             {Object.entries(scouting.attack_channels).map(([channel, value]) => (

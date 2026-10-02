@@ -365,3 +365,42 @@ goals. Rating and simulated win% can disagree for manual lineup edits (5-7
 non-monotonic steps of 17 within the realistic band, confirmed with common random
 numbers). The swap optimizer is unaffected (0/20). Planned fix: rating v2 derives
 the overall rating from the predicted xG margin (Part 6).
+
+## Thin squads always field exactly 11, with fallback tracked and shown
+
+**What**: `engine/opponent_lineup.py::build_opponent_lineup` fills the opponent's
+fixed 4-2-3-1 XI from the drawn squad, falling back to the nearest adjacent
+position group (`config.game.POSITION_GROUP_FALLBACK_CHAIN`: DF -> MF -> FW, MF ->
+DF -> FW, FW -> MF -> DF) when a slot's native group is too thin, ranking
+candidates by `role_fit_score` for the slot being filled rather than raw ability
+(reusing the exact penalty mechanism `engine/weaknesses.py` already applies to the
+user's own out-of-position picks). Returns `None` only if a squad can't field 11
+even after exhausting every fallback group. `graph/nodes.py::draw()` excludes such
+squads (logged via `logging.warning`) rather than offering a broken opponent, and
+caches fieldability per team_id for the process's lifetime (squads don't change at
+runtime). The scouting report shows which slots were filled out of position.
+
+**A real, more serious bug this surfaced**: auditing real-data squad fieldability
+found that `draw()`'s own candidate query for UCL mode selected **every row in the
+`clubs` table** (`pipeline/real_source.py` populates ~490 of these — every real
+club any candidate player happens to play for, not just the 36 actually in the
+Champions League), instead of the 36 clubs that actually have a `Squad` row. Before
+this fix, a UCL draw had roughly a 93% chance (454/490) of landing on a club with
+**zero** squad members, producing a 0-player opponent — a pre-existing, undetected
+bug, not something this change introduced. Fixed by querying `Squad.team_id`
+(filtered by `tournament`) directly instead of `Club`/`NationalTeam`, which is both
+the correctness fix and a performance one (36 squad loads instead of 490).
+
+**Audit numbers, real data** (`docs/PROGRESS.md` Part 2b): WC2026 — 43/43 teams
+fieldable, 0 excluded, 3 needed >=1 out-of-position fill (4 fills total).
+UCL2025-26 — 36/36 real clubs fieldable, 0 excluded, 2 needed >=1 out-of-position
+fill (2 fills total). (5 of the 48 real WC2026 teams and ~454 of ~490 referenced
+clubs have no `national_teams.csv`/`Squad` row at all in this dataset and were
+never candidates in the first place — see `docs/PROGRESS.md` Phase 8/6c, not a
+Part 2b exclusion.)
+
+**Tests**: `tests/test_opponent_lineup.py` — unit tests for the fallback chain, the
+all-native-positions (no fallback) case, and the genuinely-too-thin-to-field-11
+case, plus the requested property test: for every team in both modes that the
+synthetic seed makes fieldable, the built XI has exactly the 11 formation slots,
+all distinct real squad members.
