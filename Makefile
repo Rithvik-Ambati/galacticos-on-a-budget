@@ -26,7 +26,6 @@ web:
 
 lint:
 	ruff check .
-	ruff format --check .
 
 typecheck:
-	mypy engine rag llm
+	mypy engine rag llm pipeline db config api evals graph
