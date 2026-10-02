@@ -20,9 +20,11 @@ from config.game import COUNTER_MAX_ROUNDS
 from db.models import Club, NationalTeam
 from engine.analyse import build_analysis
 from engine.counter import run_counter_round
+from engine.motm import man_of_the_match
+from engine.postmatch import analyse_post_match
 from engine.rating import get_default_rating_model
 from engine.rules import validate_lineup
-from engine.schemas import Lineup, PlayerCard
+from engine.schemas import Lineup, LineupAnalysis, PlayerCard
 from engine.simulation import simulate_match, simulate_two_legs
 from graph.state import GameState
 from llm.narrator import narrate_coach_report, narrate_match_report
@@ -73,8 +75,12 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
                 teams = (await session.execute(select(NationalTeam.team_id))).scalars().all()
             else:
                 teams = (await session.execute(select(Club.club_id))).scalars().all()
-        rng = random.Random(f"{state['session_id']}:{seed}")
-        opponent_team_id = rng.choice(sorted(teams))
+        fixed = state.get("fixed_opponent_team_id")
+        if fixed and fixed in teams:
+            opponent_team_id = fixed
+        else:
+            rng = random.Random(f"{state['session_id']}:{seed}")
+            opponent_team_id = rng.choice(sorted(teams))
 
         async with session_factory() as session:
             squad = await load_squad_player_cards(session, opponent_team_id)
@@ -191,7 +197,14 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             else:
                 rating = rating_model.rate(lineup, opponent_profile, opponent_lineup)
                 sim = simulate_match(rating, lineup, opponent_profile, opponent_lineup=opponent_lineup)
-        return {"simulation": sim.model_dump()}
+            motm = man_of_the_match(lineup, sim)
+            analysis = LineupAnalysis.model_validate(state["analysis"])
+            post_match = analyse_post_match(analysis.weaknesses, analysis.strengths, sim)
+        return {
+            "simulation": sim.model_dump(),
+            "man_of_the_match": motm.model_dump(),
+            "post_match_analysis": post_match.model_dump(),
+        }
 
     async def narrate_match(state: GameState) -> dict[str, Any]:
         from engine.schemas import SimulationResult

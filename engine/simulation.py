@@ -24,6 +24,7 @@ from config.game import (
     EXTRA_TIME_FRACTION,
     EXTRA_TIME_STAMINA_FACTOR,
     HOME_ADVANTAGE_LAMBDA_MULTIPLIER,
+    MOTM_ASSIST_PROBABILITY,
     PENALTY_LEAGUE_AVERAGE_CONVERSION,
     SIMULATION_RUNS,
 )
@@ -64,11 +65,20 @@ def expected_goals(rating: RatingResult, opponent: TeamProfile) -> tuple[float, 
     )
 
 
-def _chance_share_by_zone(lineup: Lineup, opponent: TeamProfile, opponent_lineup: Lineup | None) -> dict[str, float]:
+def _def_zone_probabilities(opponent: TeamProfile, opponent_lineup: Lineup | None) -> dict[str, float]:
+    """Pre-match expected share of the opponent's attacking chances by horizontal
+    defensive zone -- used both for the public chance_share_by_zone field and (via
+    engine/motm.py) as the "expected" baseline a zone's actual conceded goals are
+    compared against for Man of the Match's defensive-contribution score."""
     threats = zone_threat_map(opponent, opponent_lineup)
     def_threats = {h: threats[("def", h)] for h in ("left", "center", "right")}
     total = sum(def_threats.values()) or 1.0
-    return {f"{h}_channel": round(v / total, 3) for h, v in def_threats.items()}
+    return {h: v / total for h, v in def_threats.items()}
+
+
+def _chance_share_by_zone(lineup: Lineup, opponent: TeamProfile, opponent_lineup: Lineup | None) -> dict[str, float]:
+    probs = _def_zone_probabilities(opponent, opponent_lineup)
+    return {f"{h}_channel": round(v, 3) for h, v in probs.items()}
 
 
 def _simulate_goals(lam_a: float, lam_b: float, runs: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
@@ -106,6 +116,7 @@ def _sample_narrative(
     user_lineup: Lineup,
     opponent: TeamProfile,
     rng: np.random.Generator,
+    opponent_lineup: Lineup | None = None,
 ) -> tuple[list[MatchEvent], tuple[int, int]]:
     attackers = [p for p in user_lineup.assignments.values() if p.position_group in ("FW", "MF")] or list(
         user_lineup.assignments.values()
@@ -114,6 +125,10 @@ def _sample_narrative(
     weights = weights / weights.sum()
 
     danger = opponent.danger_players or []
+    zone_probs = _def_zone_probabilities(opponent, opponent_lineup)
+    zones = list(zone_probs)
+    zone_weights = np.array([zone_probs[z] for z in zones])
+    zone_weights = zone_weights / zone_weights.sum() if zone_weights.sum() else np.full(len(zones), 1 / len(zones))
 
     events: list[MatchEvent] = []
     user_goals = int(rng.poisson(lam_user))
@@ -121,14 +136,26 @@ def _sample_narrative(
 
     for _ in range(user_goals):
         minute = int(rng.integers(1, 91))
-        scorer = attackers[int(rng.choice(len(attackers), p=weights))]
+        scorer_idx = int(rng.choice(len(attackers), p=weights))
+        scorer = attackers[scorer_idx]
+        assist_id, assist_name = None, None
+        other_attackers = [p for i, p in enumerate(attackers) if i != scorer_idx]
+        if other_attackers and rng.random() < MOTM_ASSIST_PROBABILITY:
+            assist_weights = np.array([max(1.0, p.ability_score) for p in other_attackers])
+            assist_weights = assist_weights / assist_weights.sum()
+            assister = other_attackers[int(rng.choice(len(other_attackers), p=assist_weights))]
+            assist_id, assist_name = assister.player_id, assister.name
         events.append(
-            MatchEvent(minute=minute, type="goal", side="user", player_name=scorer.name)
+            MatchEvent(
+                minute=minute, type="goal", side="user", player_name=scorer.name,
+                player_id=scorer.player_id, assist_player_id=assist_id, assist_player_name=assist_name,
+            )
         )
     for _ in range(opp_goals):
         minute = int(rng.integers(1, 91))
         scorer_name = danger[int(rng.integers(0, len(danger)))].name if danger else "Opponent forward"
-        events.append(MatchEvent(minute=minute, type="goal", side="opponent", player_name=scorer_name))
+        zone = zones[int(rng.choice(len(zones), p=zone_weights))]
+        events.append(MatchEvent(minute=minute, type="goal", side="opponent", player_name=scorer_name, zone=zone))
 
     events.sort(key=lambda e: e.minute)
     return events, (user_goals, opp_goals)
@@ -157,7 +184,9 @@ def simulate_match(
     went_to_pens = False
     penalty_score: tuple[int, int] | None = None
 
-    narrative_events, narrative_score = _sample_narrative(lam_user, lam_opp, user_lineup, opponent, rng)
+    narrative_events, narrative_score = _sample_narrative(
+        lam_user, lam_opp, user_lineup, opponent, rng, opponent_lineup=opponent_lineup
+    )
     if narrative_score[0] == narrative_score[1] and knockout:
         went_to_et = True
         et_lam_user = lam_user * EXTRA_TIME_FRACTION * EXTRA_TIME_STAMINA_FACTOR
@@ -234,8 +263,12 @@ def simulate_two_legs(
     draws = int(np.sum(agg_user == agg_opp))
     losses = runs - user_wins - draws
 
-    narrative_leg1, score_leg1 = _sample_narrative(leg1[0], leg1[1], user_lineup, opponent, rng)
-    narrative_leg2_raw, score_leg2 = _sample_narrative(leg2[0], leg2[1], user_lineup, opponent, rng)
+    narrative_leg1, score_leg1 = _sample_narrative(
+        leg1[0], leg1[1], user_lineup, opponent, rng, opponent_lineup=opponent_lineup
+    )
+    narrative_leg2_raw, score_leg2 = _sample_narrative(
+        leg2[0], leg2[1], user_lineup, opponent, rng, opponent_lineup=opponent_lineup
+    )
     narrative_leg2 = [MatchEvent(**{**e.model_dump(), "minute": e.minute}) for e in narrative_leg2_raw]
     aggregate_score = (score_leg1[0] + score_leg2[0], score_leg1[1] + score_leg2[1])
 

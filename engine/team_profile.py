@@ -5,10 +5,19 @@ Implements docs/DESIGN.md section 7.4 ("map to the user's player(s) defending th
 
 from __future__ import annotations
 
-from engine.schemas import Lineup, TeamProfile
+import statistics
+
+from config.game import LEAGUE_AVERAGE_ABILITY_SCORE
+from engine.schemas import Lineup, OpponentWeakZone, PlayerCard, TeamProfile
 
 PPDA_AGGRESSIVE = 6.0  # a very high press
 PPDA_PASSIVE = 14.0  # a low block
+
+_DEFENSIVE_ZONE_BY_POSITION_CODE = {
+    "LB": "left", "LWB": "left",
+    "CB": "center",
+    "RB": "right", "RWB": "right",
+}
 
 # attack_channels keys are from the OPPONENT's attacking perspective (their left/right
 # flank). A team's right winger runs at the defending side's left flank, so the zone a
@@ -32,6 +41,49 @@ def _opponent_attacking_zone_strength(opponent_lineup: Lineup) -> dict[str, floa
         h: zone_average(opponent_lineup, defs, "att", h) or 50.0
         for h in ("left", "center", "right")
     }
+
+
+def opponent_weak_zone(
+    squad: list[PlayerCard], league_average: float = LEAGUE_AVERAGE_ABILITY_SCORE
+) -> OpponentWeakZone:
+    """Screen 3's "where they're weak": the opponent's own defensive personnel strength
+    per horizontal zone (LB/LWB -> left, CB -> center, RB/RWB -> right), compared
+    against the league-average ability baseline -- an attacking opportunity for the
+    user, the mirror image of zone_threat_map's "threat to the user" measure."""
+    by_zone: dict[str, list[float]] = {"left": [], "center": [], "right": []}
+    for p in squad:
+        zone = _DEFENSIVE_ZONE_BY_POSITION_CODE.get(p.position_code)
+        if zone:
+            by_zone[zone].append(p.ability_score)
+
+    zone_strengths = {
+        zone: round(statistics.mean(scores), 1) if scores else league_average
+        for zone, scores in by_zone.items()
+    }
+
+    weakest_zone = min(zone_strengths, key=lambda z: zone_strengths[z])
+    weakest_value = zone_strengths[weakest_zone]
+    below_average = weakest_value < league_average
+
+    if below_average:
+        description = (
+            f"Their {weakest_zone} defensive zone rates {weakest_value:.0f}, below the "
+            f"league average of {league_average:.0f} — an opening to attack."
+        )
+    else:
+        description = (
+            f"No clear weakness; their least strong zone is {weakest_zone} "
+            f"({weakest_value:.0f} vs league average {league_average:.0f})."
+        )
+
+    return OpponentWeakZone(
+        has_clear_weakness=below_average,
+        horizontal_zone=weakest_zone,
+        zone_strength=weakest_value,
+        league_average=league_average,
+        zone_strengths=zone_strengths,
+        description=description,
+    )
 
 
 def zone_threat_map(

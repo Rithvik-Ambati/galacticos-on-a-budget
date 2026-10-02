@@ -8,7 +8,7 @@ import { MatchReport } from "./screens/MatchReport";
 import { OpponentResponse } from "./screens/OpponentResponse";
 import { Scouting } from "./screens/Scouting";
 import { Welcome } from "./screens/Welcome";
-import type { CounterRoundResult, LineupAnalysis, PlayerCard, ScoutingResponse, SimulationResult } from "./types";
+import type { CounterRoundResult, LineupAnalysis, ManOfTheMatch, PlayerCard, ScoutingResponse, SimulationResult } from "./types";
 
 type Screen = "welcome" | "draw" | "scouting" | "build" | "coach" | "opponent_response" | "match_day" | "match_report";
 
@@ -27,7 +27,13 @@ export default function App() {
   const [lastCounterRound, setLastCounterRound] = useState<CounterRoundResult | null>(null);
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [matchReportText, setMatchReportText] = useState("");
+  const [manOfTheMatch, setManOfTheMatch] = useState<ManOfTheMatch | null>(null);
   const [counterRound, setCounterRound] = useState(0);
+  const [rematchPrefill, setRematchPrefill] = useState<{
+    formation: string;
+    assignments: Record<string, string>;
+    playersById: Record<string, PlayerCard>;
+  } | null>(null);
 
   async function startGame(mode: "wc" | "ucl") {
     setBusy(true);
@@ -80,6 +86,7 @@ export default function App() {
     } else if (result.simulation) {
       setSimulation(result.simulation);
       setMatchReportText(result.match_report_text ?? "");
+      setManOfTheMatch(result.man_of_the_match);
       setScreen("match_day");
     }
   }
@@ -91,7 +98,28 @@ export default function App() {
     setAnalysis(null);
     setSimulation(null);
     setCounterRound(0);
+    setRematchPrefill(null);
     setError(null);
+  }
+
+  async function handleRematch() {
+    if (!sessionId) return;
+    setError(null);
+    try {
+      const result = await api.rematch(sessionId);
+      setSessionId(result.session_id);
+      setOpponentName(result.opponent_name);
+      setAssignments(result.assignments);
+      setPlayersById((prev) => ({ ...prev, ...result.players }));
+      setRematchPrefill({ formation: result.formation, assignments: result.assignments, playersById: result.players });
+      setAnalysis(null);
+      setSimulation(null);
+      setManOfTheMatch(null);
+      setCounterRound(0);
+      setScreen("build");
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   return (
@@ -105,7 +133,15 @@ export default function App() {
       )}
 
       {screen === "build" && sessionId && (
-        <BuildXI sessionId={sessionId} opponentName={opponentName} onAnalyse={handleAnalyse} error={error} />
+        <BuildXI
+          sessionId={sessionId}
+          opponentName={opponentName}
+          onAnalyse={handleAnalyse}
+          error={error}
+          initialFormation={rematchPrefill?.formation}
+          initialAssignments={rematchPrefill?.assignments}
+          initialPlayersById={rematchPrefill?.playersById}
+        />
       )}
 
       {screen === "coach" && analysis && (
@@ -135,7 +171,9 @@ export default function App() {
           simulation={simulation}
           matchReportText={matchReportText}
           analysis={analysis}
+          manOfTheMatch={manOfTheMatch}
           onReplay={resetToWelcome}
+          onRematch={handleRematch}
         />
       )}
     </div>

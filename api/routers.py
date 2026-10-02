@@ -34,6 +34,7 @@ from api.schemas import (
     LineupValidateResponse,
     PlayerSearchResponse,
     PlayerSearchResult,
+    RematchResponse,
     ScoutingResponse,
     SessionStateResponse,
     SimulateResponse,
@@ -41,11 +42,12 @@ from api.schemas import (
 from db.models import GameSession
 from engine.rules import eligibility as engine_eligibility
 from engine.rules import validate_lineup
-from engine.schemas import Lineup, LineupAnalysis, SimulationResult
-from engine.team_profile import press_intensity
+from engine.schemas import Lineup, LineupAnalysis, ManOfTheMatch, PlayerCard, PostMatchAnalysis, SimulationResult
+from engine.team_profile import opponent_weak_zone, press_intensity
 from pipeline.to_engine import (
     load_candidate_pool,
     load_player_card,
+    load_squad_player_cards,
     load_squad_player_ids,
     load_team_name,
     load_team_profile,
@@ -111,6 +113,58 @@ async def draw(session_id: str, session: AsyncSession = Depends(get_session)) ->
     )
 
 
+@router.post("/sessions/{session_id}/rematch", response_model=RematchResponse)
+async def rematch(session_id: str, session: AsyncSession = Depends(get_session)) -> RematchResponse:
+    """Screen 8's "Play again vs the same opponent": a new session pinned to the old
+    one's opponent (graph/nodes.py's draw() skips its random pick when
+    `fixed_opponent_team_id` is set), with the previous formation/lineup carried over
+    and re-validated -- never assumed still legal (a squad list can't change mid-build,
+    but re-checking is free and this is the one place CLAUDE.md's "the engine decides"
+    rule would otherwise be easy to skip for a "just copy the old state" shortcut).
+    """
+    old_row = await _get_session_row(session, session_id)
+    graph_ = get_graph()
+    old_state = _current_state(graph_, session_id)
+    opponent_team_id = old_state.get("opponent_team_id")
+    if not opponent_team_id:
+        raise _problem(409, "no opponent yet", "the previous session never completed a draw")
+
+    new_session_id = uuid.uuid4().hex
+    session.add(GameSession(session_id=new_session_id, mode=old_row.mode, state={}))
+    await session.commit()
+
+    config = {"configurable": {"thread_id": new_session_id}}
+    new_state = await graph_.ainvoke(
+        {"mode": old_row.mode, "session_id": new_session_id, "fixed_opponent_team_id": opponent_team_id}, config
+    )
+    name = await load_team_name(session, opponent_team_id)
+
+    formation = old_state.get("formation") or "4-3-3"
+    assignments = dict(old_state.get("lineup_assignments", {}))
+    opponent_ids = await load_squad_player_ids(session, opponent_team_id)
+
+    cards: dict[str, Any] = {}
+    for pid in assignments.values():
+        card = await load_player_card(session, pid)
+        if card is not None:
+            cards[pid] = card
+    lineup = Lineup(formation=formation, assignments={sid: cards[pid] for sid, pid in assignments.items() if pid in cards})
+    validation = validate_lineup(lineup, opponent_ids, require_complete=False)
+
+    return RematchResponse(
+        session_id=new_session_id,
+        mode=old_row.mode,
+        opponent_team_id=opponent_team_id,
+        opponent_name=name,
+        formation=formation,
+        assignments=assignments,
+        players=cards,
+        valid=validation.valid,
+        violations=[v.message for v in validation.violations],
+        awaiting=_awaiting(new_state) or "lineup",
+    )
+
+
 @router.get("/sessions/{session_id}/scout", response_model=ScoutingResponse)
 async def scout(session_id: str, session: AsyncSession = Depends(get_session)) -> ScoutingResponse:
     graph_ = get_graph()
@@ -119,6 +173,18 @@ async def scout(session_id: str, session: AsyncSession = Depends(get_session)) -
     if not opponent_team_id:
         raise _problem(409, "no opponent yet", "call /draw first")
     profile = await load_team_profile(session, opponent_team_id, opponent_team_id, "4-2-3-1")
+    squad = await load_squad_player_cards(session, opponent_team_id)
+
+    # The SAME opponent XI engine.rating/engine.counter/engine.simulation already use
+    # (graph/nodes.py's draw()/opponent_counter() are the only writers of these two
+    # state keys) -- not a second, possibly-inconsistent lineup computed here.
+    opponent_formation = state.get("opponent_formation") or "4-2-3-1"
+    opponent_lineup: dict[str, PlayerCard] = {}
+    for slot_id, pid in state.get("opponent_lineup_assignments", {}).items():
+        card = await load_player_card(session, pid)
+        if card is not None:
+            opponent_lineup[slot_id] = card
+
     return ScoutingResponse(
         opponent_team_id=opponent_team_id,
         attack_channels=profile.attack_channels,
@@ -127,6 +193,10 @@ async def scout(session_id: str, session: AsyncSession = Depends(get_session)) -
         set_piece_threat=profile.set_piece_threat,
         aerial=profile.aerial,
         danger_players=[dp.model_dump() for dp in profile.danger_players],
+        weak_zone=opponent_weak_zone(squad),
+        opponent_formation=opponent_formation,
+        opponent_lineup=opponent_lineup,
+        lineup_source="estimated",
     )
 
 
@@ -244,6 +314,10 @@ async def decision(session_id: str, req: DecisionRequest, session: AsyncSession 
         coach_report_text=state.get("coach_report_text"),
         simulation=SimulationResult.model_validate(state["simulation"]) if state.get("simulation") else None,
         match_report_text=state.get("match_report_text"),
+        man_of_the_match=ManOfTheMatch.model_validate(state["man_of_the_match"]) if state.get("man_of_the_match") else None,
+        post_match_analysis=(
+            PostMatchAnalysis.model_validate(state["post_match_analysis"]) if state.get("post_match_analysis") else None
+        ),
     )
 
 
@@ -256,6 +330,8 @@ async def simulate_endpoint(session_id: str) -> SimulateResponse:
     return SimulateResponse(
         simulation=SimulationResult.model_validate(state["simulation"]),
         match_report_text=state.get("match_report_text", ""),
+        man_of_the_match=ManOfTheMatch.model_validate(state["man_of_the_match"]),
+        post_match_analysis=PostMatchAnalysis.model_validate(state["post_match_analysis"]),
     )
 
 
@@ -298,5 +374,6 @@ async def get_session_state(session_id: str, session: AsyncSession = Depends(get
         awaiting=_awaiting(state),
         analysis=LineupAnalysis.model_validate(state["analysis"]) if state.get("analysis") else None,
         simulation=SimulationResult.model_validate(state["simulation"]) if state.get("simulation") else None,
+        man_of_the_match=ManOfTheMatch.model_validate(state["man_of_the_match"]) if state.get("man_of_the_match") else None,
         messages=state.get("messages", []),
     )

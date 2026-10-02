@@ -175,6 +175,33 @@ WEAKNESS_THRESHOLDS: dict[str, float] = {
     "low_confidence": 0.5,  # player confidence flag below this is "low coverage"
 }
 
+# pipeline/features.py builds ability_score from position-relative percentiles, so an
+# average player in any position group already scores ~50 by construction -- this is
+# the project's existing "league average" convention (zone_average's own "or 50.0"
+# fallback, role_fit's 50.0 default, etc. all assume it already). Named explicitly
+# here because engine/team_profile.py::opponent_weak_zone uses it as a real decision
+# threshold, not just a missing-data fallback.
+LEAGUE_AVERAGE_ABILITY_SCORE: float = 50.0
+
+# engine/strengths.py mirrors engine/weaknesses.py's WEAKNESS_THRESHOLDS: the minimum
+# margin (user strength minus opponent threat, or role-fit above baseline) before a
+# zone/role counts as a genuine strength worth telling the user about.
+STRENGTH_THRESHOLDS: dict[str, float] = {
+    "zone_advantage": 12.0,  # defender-strength minus opponent-threat, mirrors zone_mismatch
+    "role_coverage": 80.0,  # a role-fit score at/above this counts as "well covered"
+}
+STRENGTH_TOP_K: int = 3
+
+# engine/motm.py per-player match-contribution weights (docs/DECISIONS.md "Man of the
+# match"). Goals/assists are discrete per-event credit; defensive contribution is a
+# continuous (expected-conceded minus actual-conceded) delta in the same rough 0-3
+# per-goal units, so MOTM_DEFENSIVE_WEIGHT is scaled up to make a strong defensive
+# shift comparable to a goal rather than always losing to any attacking contribution.
+MOTM_GOAL_WEIGHT: float = 3.0
+MOTM_ASSIST_WEIGHT: float = 1.5
+MOTM_DEFENSIVE_WEIGHT: float = 2.0
+MOTM_ASSIST_PROBABILITY: float = 0.7  # share of user goals that get an assist credited
+
 SWAP_TOP_K: int = 3
 
 COUNTER_BEAM_WIDTH: int = 5
@@ -206,3 +233,11 @@ EXPECTED_GOALS_OPP_ATTACK_PROXY_WEIGHT: float = 1.6
 EXPECTED_GOALS_OPP_ATTACK_PROXY_DEFAULT: float = 72.0
 EXPECTED_GOALS_DEFENCE_SUPPRESSION_WEIGHT: float = 1.0  # was 0.6
 EXPECTED_GOALS_OPP_MATCHUP_SUPPRESSION_WEIGHT: float = 0.6  # was 0.3
+
+# engine.postmatch's margin (goals) actual conceded must exceed pre-match expected
+# conceded-by-zone before a weakness counts as "exposed" rather than "held" (and,
+# flipped, before a strength counts as "unexpectedly breached" rather than "paid off").
+# A full goal of margin, not a fraction, since Poisson-distributed single-match goal
+# counts are inherently noisy -- a 0.3-goal overshoot is well within normal variance,
+# not evidence the flagged zone actually mattered this match.
+POSTMATCH_EXPOSURE_MARGIN_GOALS: float = 1.0

@@ -1,5 +1,6 @@
 import type {
   DecisionResponse,
+  PlayerCard,
   PlayerSearchResult,
   ScoutingResponse,
   SessionStateResponse,
@@ -37,6 +38,23 @@ export function draw(sessionId: string) {
 
 export function scout(sessionId: string) {
   return request<ScoutingResponse>(`/sessions/${sessionId}/scout`);
+}
+
+export interface RematchResponse {
+  session_id: string;
+  mode: string;
+  opponent_team_id: string;
+  opponent_name: string;
+  formation: string;
+  assignments: Record<string, string>;
+  players: Record<string, PlayerCard>;
+  valid: boolean;
+  violations: string[];
+  awaiting: string;
+}
+
+export function rematch(sessionId: string) {
+  return request<RematchResponse>(`/sessions/${sessionId}/rematch`, { method: "POST" });
 }
 
 export function searchPlayers(

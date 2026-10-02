@@ -42,6 +42,16 @@ export interface Weakness {
   description: string;
 }
 
+export interface Strength {
+  type: string;
+  vertical_zone: string;
+  horizontal_zone: string;
+  severity: number;
+  evidence: Record<string, number>;
+  affected_slots: string[];
+  description: string;
+}
+
 export interface SwapSuggestion {
   weakness_type: string | null;
   out_slot: string;
@@ -74,6 +84,7 @@ export interface LineupAnalysis {
   formation: string;
   rating: { sub_ratings: SubRatings; overall: number };
   weaknesses: Weakness[];
+  strengths: Strength[];
   swaps_by_weakness: Record<string, SwapSuggestion[]>;
   manager_score: ManagerScoreResult;
   validation: ValidationResult;
@@ -86,6 +97,10 @@ export interface MatchEvent {
   side: string;
   player_name: string;
   description: string;
+  player_id: string | null;
+  assist_player_id: string | null;
+  assist_player_name: string | null;
+  zone: string | null;
 }
 
 export interface SimulationResult {
@@ -101,6 +116,15 @@ export interface SimulationResult {
   penalty_score: [number, number] | null;
 }
 
+export interface OpponentWeakZone {
+  has_clear_weakness: boolean;
+  horizontal_zone: string;
+  zone_strength: number;
+  league_average: number;
+  zone_strengths: Record<string, number>;
+  description: string;
+}
+
 export interface ScoutingResponse {
   opponent_team_id: string;
   attack_channels: Record<string, number>;
@@ -109,6 +133,10 @@ export interface ScoutingResponse {
   set_piece_threat: number;
   aerial: number;
   danger_players: { player_id: string; name: string; position_code: string; ability_score: number; note: string }[];
+  weak_zone: OpponentWeakZone;
+  opponent_formation: string;
+  opponent_lineup: Record<string, PlayerCard>;
+  lineup_source: string;
 }
 
 export type Awaiting = "lineup" | "decision" | "question" | null;
@@ -130,6 +158,22 @@ export interface CounterRoundResult {
   opponent_formation: string;
 }
 
+export interface PlayerContribution {
+  player_id: string;
+  player_name: string;
+  goals: number;
+  assists: number;
+  defensive_contribution: number;
+  ability_score: number;
+  score: number;
+}
+
+export interface ManOfTheMatch {
+  player_id: string;
+  player_name: string;
+  contributions: PlayerContribution[];
+}
+
 export interface DecisionResponse {
   awaiting: Awaiting;
   counter_round: number | null;
@@ -138,6 +182,7 @@ export interface DecisionResponse {
   coach_report_text: string | null;
   simulation: SimulationResult | null;
   match_report_text: string | null;
+  man_of_the_match: ManOfTheMatch | null;
 }
 
 export interface SessionStateResponse {
@@ -150,5 +195,6 @@ export interface SessionStateResponse {
   awaiting: Awaiting;
   analysis: LineupAnalysis | null;
   simulation: SimulationResult | null;
+  man_of_the_match: ManOfTheMatch | null;
   messages: { role: string; content: string }[];
 }

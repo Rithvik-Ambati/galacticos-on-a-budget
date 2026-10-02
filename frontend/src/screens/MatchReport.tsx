@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as api from "../api";
-import type { LineupAnalysis, SimulationResult } from "../types";
+import type { LineupAnalysis, ManOfTheMatch, SimulationResult } from "../types";
 
 interface Props {
   sessionId: string;
@@ -8,7 +8,9 @@ interface Props {
   simulation: SimulationResult;
   matchReportText: string;
   analysis: LineupAnalysis;
+  manOfTheMatch: ManOfTheMatch | null;
   onReplay: () => void;
+  onRematch: () => void;
 }
 
 interface Message {
@@ -18,7 +20,7 @@ interface Message {
 
 const SUGGESTIONS = ["Why did we win?", "What are the odds?", "Who are the best rated players?"];
 
-export function MatchReport({ sessionId, opponentName, simulation, matchReportText, analysis, onReplay }: Props) {
+export function MatchReport({ sessionId, opponentName, simulation, matchReportText, analysis, manOfTheMatch, onReplay, onRematch }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -55,9 +57,14 @@ export function MatchReport({ sessionId, opponentName, simulation, matchReportTe
           <h2>Match Report</h2>
           <div className="text-dim2">You {us} — {them} {opponentName} · Full Time</div>
         </div>
-        <button className="btn btn-ghost" onClick={onReplay}>
-          New Opponent
-        </button>
+        <div className="row" style={{ gap: 10 }}>
+          <button className="btn btn-outline" data-testid="play-again-button" onClick={onRematch}>
+            Play Again vs {opponentName}
+          </button>
+          <button className="btn btn-ghost" onClick={onReplay}>
+            New Opponent
+          </button>
+        </div>
       </div>
 
       <div className="row" style={{ alignItems: "flex-start", gap: 20 }}>
@@ -65,6 +72,12 @@ export function MatchReport({ sessionId, opponentName, simulation, matchReportTe
           <div className="card">
             <div className="text-dim">{matchReportText}</div>
           </div>
+          {manOfTheMatch && (
+            <div className="card" data-testid="man-of-the-match">
+              <div className="text-dim2">Man of the Match</div>
+              <div className="headline gold" style={{ fontSize: 22 }}>{manOfTheMatch.player_name}</div>
+            </div>
+          )}
           <div className="card">
             <div className="headline" style={{ fontSize: 14, marginBottom: 10 }}>Key Moments</div>
             <div className="col" style={{ fontSize: 13 }}>

@@ -345,3 +345,66 @@ deployment (explicit user instruction: don't deploy yet). Rating v2 is also stil
 attempted — real match results (`games.csv`) now exist and would support a genuine
 backtest, but building a trained model for it is further work than "integrate real
 data" covers and wasn't requested.
+
+## Phase 6c — rating rebalance + screen-by-screen gap closure (in progress)
+
+**Step 0** (rating diagnosis) and its approved fix: see `docs/DECISIONS.md`
+"Rating/simulation rebalance." Budget raised €500M -> €1B: see `docs/DECISIONS.md`
+"Budget raised."
+
+**Batch A — done, tested, Playwright-checked** (`frontend/e2e/batch-a.spec.ts`):
+- A1 opponent "where they're weak" (screen 3): `engine/team_profile.py::opponent_weak_zone`,
+  wired into `/sessions/{id}/scout`'s new `weak_zone` field, rendered in `Scouting.tsx`.
+  `tests/test_team_profile.py` (5 tests).
+- A2 strengths (screen 5): `engine/strengths.py` mirrors `weaknesses.py` (zone
+  advantage, matchup win, role coverage), top 3 by severity, added to
+  `LineupAnalysis.strengths`, rendered in `CoachReport.tsx`. `tests/test_strengths.py`
+  (5 tests).
+- A3 man of the match (screen 8): `engine/motm.py`, using real per-event scorer/assist
+  credit (now tagged on `MatchEvent`) plus a defensive-contribution score (expected
+  vs actual goals conceded per zone, reusing the same zone data
+  `chance_share_by_zone` already carried). Always produces a winner (0-0 ties broken
+  by ability score). Wired through `graph/nodes.py`'s `simulate` node into
+  `/decision` and `/simulate`, rendered in `MatchReport.tsx`. `tests/test_motm.py`
+  (5 tests).
+- A4 play again (screen 8): `POST /sessions/{id}/rematch` pins the new session to
+  the same opponent (`graph/nodes.py::draw` now accepts `fixed_opponent_team_id`),
+  carries over formation/lineup, re-validates rather than assuming still legal.
+  `BuildXI.tsx` accepts prefill props. 2 new cases in `tests/test_api.py`.
+
+**Batch B — in progress**:
+- B1 opponent lineup (screen 3): done. Scouting's "Likely Lineup" now reads the
+  SAME `opponent_lineup_assignments`/`opponent_formation` state keys
+  `engine.rating`/`engine.counter`/`engine.simulation` already use (verified, not
+  assumed — `graph/nodes.py`'s `draw()`/`opponent_counter()` are the only writers;
+  `scout()` was only ever missing a read of them, there was no second,
+  divergent computation to unify). Labelled `lineup_source: "estimated"` (a squad's
+  best-XI-by-ability, not real match-lineup-frequency data — see below). Verified
+  with a real counter round in `tests/test_api.py` and
+  `frontend/e2e/batch-b.spec.ts`.
+  **Incidental finding, not a regression**: some synthetic squads are too thin in
+  one position group for `draw()`'s greedy fill to reach all 11 slots (a
+  pre-existing gap in that function, invisible until this phase exposed the
+  lineup in the UI for the first time). Not fixed in this phase — tracked here so
+  it isn't lost.
+  **Not implemented, scoped out, reason**: the spec's literal "most frequent
+  starters from real recent Transfermarkt lineups" requires persisting
+  per-team starting-XI frequency from `game_lineups.csv.gz` into the production
+  schema (currently only used transiently during real-data ingestion, then
+  discarded) plus a full real-data pipeline re-run (~10 minutes) to test. Given
+  Batch B's framing as "polish," this was deferred rather than rushed; the
+  honestly-labelled "estimated" fallback is what's shipped.
+- B2 what worked / what didn't (screen 8): `engine/postmatch.py` compares each
+  pre-match def-zone weakness/strength against this match's actual zone-tagged
+  conceded goals vs the pre-match expected share (`POSTMATCH_EXPOSURE_MARGIN_GOALS`
+  in config). Non-def-zone items (press resistance, out-of-position, etc.) are
+  honestly marked `inconclusive` rather than fabricating a zone-level claim the
+  engine can't actually measure. Wired into the `simulate` graph node and
+  `SimulateResponse`/`DecisionResponse`. `tests/test_postmatch.py` (5 tests).
+  **Not yet done**: frontend rendering in `MatchReport.tsx` and its Playwright
+  check — backend-only so far.
+- B3 (animations) and B4 (share): not started.
+
+Full suite at this point: 97 passed, `ruff check .` and
+`mypy engine rag llm pipeline db config api evals graph` both clean, frontend
+`tsc --noEmit` clean.

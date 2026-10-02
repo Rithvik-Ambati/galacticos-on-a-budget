@@ -11,12 +11,18 @@ interface Props {
   opponentName: string;
   onAnalyse: (formation: string, assignments: Record<string, string>, playersById: Record<string, PlayerCard>) => Promise<void>;
   error: string | null;
+  initialFormation?: string;
+  initialAssignments?: Record<string, string>;
+  initialPlayersById?: Record<string, PlayerCard>;
 }
 
-export function BuildXI({ sessionId, opponentName, onAnalyse, error }: Props) {
-  const [formation, setFormation] = useState("4-3-3");
-  const [assignments, setAssignments] = useState<Record<string, string>>({});
-  const [playersById, setPlayersById] = useState<Record<string, PlayerCard>>({});
+export function BuildXI({
+  sessionId, opponentName, onAnalyse, error,
+  initialFormation, initialAssignments, initialPlayersById,
+}: Props) {
+  const [formation, setFormation] = useState(initialFormation ?? "4-3-3");
+  const [assignments, setAssignments] = useState<Record<string, string>>(initialAssignments ?? {});
+  const [playersById, setPlayersById] = useState<Record<string, PlayerCard>>(initialPlayersById ?? {});
   const [activeSlot, setActiveSlot] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [affordableOnly, setAffordableOnly] = useState(true);

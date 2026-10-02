@@ -29,6 +29,7 @@ from engine.optimizer import manager_score
 from engine.rating import get_default_rating_model
 from engine.rules import validate_lineup
 from engine.schemas import Lineup, LineupAnalysis, PlayerCard, TeamProfile
+from engine.strengths import find_strengths
 from engine.swaps import swaps_by_weakness
 from engine.weaknesses import find_weaknesses
 
@@ -53,6 +54,7 @@ def build_analysis(
     validation = validate_lineup(lineup, opponent_squad_player_ids)
     rating = rating_model.rate(lineup, opponent, opponent_lineup)
     weaknesses = find_weaknesses(lineup, opponent)
+    strengths = find_strengths(lineup, opponent)
     swaps = swaps_by_weakness(
         lineup, opponent, weaknesses, candidate_pool, opponent_squad_player_ids, rating_model
     )
@@ -66,6 +68,7 @@ def build_analysis(
         formation=lineup.formation,
         rating=rating,
         weaknesses=weaknesses,
+        strengths=strengths,
         swaps_by_weakness=swaps,
         manager_score=mgr,
         validation=validation,

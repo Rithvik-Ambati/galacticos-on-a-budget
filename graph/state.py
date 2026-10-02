@@ -18,6 +18,7 @@ class ChatMessage(TypedDict):
 class GameState(TypedDict, total=False):
     mode: str  # "wc" | "ucl"
     session_id: str
+    fixed_opponent_team_id: str | None  # rematch: skip the random draw, pin this opponent
     opponent_team_id: str
     opponent_formation: str
     opponent_lineup_assignments: dict[str, str]  # slot_id -> player_id, opponent's XI
@@ -31,6 +32,8 @@ class GameState(TypedDict, total=False):
     counter_history: list[dict[str, object]]
     decision: str | None  # "counter" | "lock_in"
     simulation: dict[str, object] | None
+    man_of_the_match: dict[str, object] | None
+    post_match_analysis: dict[str, object] | None
     coach_report_text: str | None
     match_report_text: str | None
     messages: list[ChatMessage]

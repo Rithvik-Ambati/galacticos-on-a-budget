@@ -173,3 +173,76 @@ async def test_simulate_before_lock_in_is_409(client: httpx.AsyncClient) -> None
     await client.post(f"/sessions/{session_id}/draw")
     r = await client.post(f"/sessions/{session_id}/simulate")
     assert r.status_code == 409
+
+
+async def test_rematch_pins_the_same_opponent_and_carries_the_lineup(client: httpx.AsyncClient) -> None:
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    r = await client.post(f"/sessions/{session_id}/draw")
+    opponent_team_id = r.json()["opponent_team_id"]
+    assignments = await _build_optimal_assignments(opponent_team_id)
+    await client.post(f"/sessions/{session_id}/lineup/analyse", json={"formation": "4-3-3", "assignments": assignments})
+    await client.post(f"/sessions/{session_id}/decision", json={"decision": "lock_in"})
+
+    r = await client.post(f"/sessions/{session_id}/rematch")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session_id"] != session_id
+    assert body["opponent_team_id"] == opponent_team_id
+    assert body["formation"] == "4-3-3"
+    assert body["assignments"] == assignments
+    assert body["valid"]
+    assert set(body["players"]) == set(assignments.values())
+
+    # the new session is independently playable from where it was left off
+    r = await client.get(f"/sessions/{body['session_id']}")
+    assert r.status_code == 200
+    assert r.json()["opponent_team_id"] == opponent_team_id
+
+
+async def test_scouting_lineup_matches_the_graph_states_own_opponent_lineup(client: httpx.AsyncClient) -> None:
+    """B1: the opponent XI shown on the scouting screen must be the exact same one
+    rating/counter/simulation use (graph/nodes.py's draw()/opponent_counter() are the
+    only writers of opponent_lineup_assignments/opponent_formation; scout() must read
+    that state, never recompute a second, possibly-divergent lineup). Proven by
+    driving a real counter round and confirming scout()'s lineup changes to match
+    exactly what that round reported changing -- not just that scout() is stable."""
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    r = await client.post(f"/sessions/{session_id}/draw")
+    opponent_team_id = r.json()["opponent_team_id"]
+
+    r = await client.get(f"/sessions/{session_id}/scout")
+    assert r.status_code == 200
+    before = r.json()
+    assert before["lineup_source"] == "estimated"
+    assert len(before["opponent_lineup"]) > 0
+    squad_ids = await _squad_player_ids(opponent_team_id)
+    assert all(p["player_id"] in squad_ids for p in before["opponent_lineup"].values())
+
+    assignments = await _build_optimal_assignments(opponent_team_id)
+    await client.post(f"/sessions/{session_id}/lineup/analyse", json={"formation": "4-3-3", "assignments": assignments})
+    r = await client.post(f"/sessions/{session_id}/decision", json={"decision": "counter"})
+    counter_round = r.json()["last_counter_round"]
+
+    r = await client.get(f"/sessions/{session_id}/scout")
+    after = r.json()
+    assert after["opponent_formation"] == counter_round["opponent_formation"]
+    if any(m["move_type"] == "substitute" for m in counter_round["moves"]):
+        assert after["opponent_lineup"] != before["opponent_lineup"]
+        sub = next(m for m in counter_round["moves"] if m["move_type"] == "substitute")
+        after_ids = {p["player_id"] for p in after["opponent_lineup"].values()}
+        assert sub["player_in_id"] in after_ids
+
+
+async def _squad_player_ids(team_id: str) -> set[str]:
+    session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+    async with session_factory() as session:
+        return await load_squad_player_ids(session, team_id)
+
+
+async def test_rematch_before_any_draw_is_409(client: httpx.AsyncClient) -> None:
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    r = await client.post(f"/sessions/{session_id}/rematch")
+    assert r.status_code == 409

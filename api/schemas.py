@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from engine.schemas import EligibilityResult, LineupAnalysis, PlayerCard, SimulationResult
+from engine.schemas import (
+    EligibilityResult,
+    LineupAnalysis,
+    ManOfTheMatch,
+    OpponentWeakZone,
+    PlayerCard,
+    PostMatchAnalysis,
+    SimulationResult,
+)
 
 
 class ProblemDetails(BaseModel):
@@ -39,6 +47,10 @@ class ScoutingResponse(BaseModel):
     set_piece_threat: float
     aerial: float
     danger_players: list[dict[str, object]]
+    weak_zone: OpponentWeakZone
+    opponent_formation: str
+    opponent_lineup: dict[str, PlayerCard]  # slot_id -> card; the SAME XI rating/counter/simulate use
+    lineup_source: str  # "estimated" (squad's best XI by ability) -- see docs/DECISIONS.md
 
 
 class PlayerSearchResult(BaseModel):
@@ -82,11 +94,28 @@ class DecisionResponse(BaseModel):
     coach_report_text: str | None = None
     simulation: SimulationResult | None = None
     match_report_text: str | None = None
+    man_of_the_match: ManOfTheMatch | None = None
+    post_match_analysis: PostMatchAnalysis | None = None
 
 
 class SimulateResponse(BaseModel):
     simulation: SimulationResult
     match_report_text: str
+    man_of_the_match: ManOfTheMatch
+    post_match_analysis: PostMatchAnalysis
+
+
+class RematchResponse(BaseModel):
+    session_id: str
+    mode: str
+    opponent_team_id: str
+    opponent_name: str
+    formation: str
+    assignments: dict[str, str]  # slot_id -> player_id, prefilled from the previous session
+    players: dict[str, PlayerCard]  # player_id -> card, so the frontend can render the prefill with no extra round-trip
+    valid: bool
+    violations: list[str]
+    awaiting: str
 
 
 class ChatRequest(BaseModel):
@@ -107,4 +136,5 @@ class SessionStateResponse(BaseModel):
     awaiting: str | None
     analysis: LineupAnalysis | None
     simulation: SimulationResult | None
+    man_of_the_match: ManOfTheMatch | None
     messages: list[dict[str, str]]

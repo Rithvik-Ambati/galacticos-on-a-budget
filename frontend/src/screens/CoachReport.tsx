@@ -67,6 +67,20 @@ export function CoachReport({ opponentName, analysis, coachReportText, assignmen
             <div className="text-dim" style={{ marginBottom: 8 }}>{coachReportText}</div>
           </div>
 
+          {analysis.strengths.length > 0 && (
+            <div className="card" data-testid="strengths-section">
+              <div className="headline" style={{ fontSize: 14, marginBottom: 8 }}>Strengths</div>
+              <div className="col" style={{ gap: 8 }}>
+                {analysis.strengths.map((s, i) => (
+                  <div key={i} className="spread" style={{ background: "var(--surface-2)", borderRadius: 10, padding: "8px 12px" }}>
+                    <span className="green" style={{ fontWeight: 700 }}>{s.type.replace(/_/g, " ")}</span>
+                    <span className="text-dim" style={{ fontSize: 13 }}>{s.description}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {analysis.weaknesses.slice(0, 3).map((w, i) => (
             <div key={i} className={`card ${i === 0 ? "danger" : ""}`}>
               <span className={`pill ${i === 0 ? "" : "warn"}`} style={i === 0 ? { background: "var(--red)", color: "#fff" } : {}}>
