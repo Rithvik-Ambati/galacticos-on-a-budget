@@ -32,7 +32,7 @@ class Player(Base):
     player_id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(128))
     dob: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
-    nationality: Mapped[str] = mapped_column(String(3))
+    nationality: Mapped[str] = mapped_column(String(64))
     positions: Mapped[list[str]] = mapped_column(JSON, default=list)
     preferred_foot: Mapped[str] = mapped_column(String(8), default="right")
     height_cm: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -59,7 +59,7 @@ class Club(Base):
 
     club_id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(128))
-    country: Mapped[str] = mapped_column(String(3))
+    country: Mapped[str] = mapped_column(String(64))
     competition: Mapped[str] = mapped_column(String(64))
 
 
@@ -68,7 +68,7 @@ class NationalTeam(Base):
 
     team_id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(128))
-    country: Mapped[str] = mapped_column(String(3))
+    country: Mapped[str] = mapped_column(String(64))
     competition: Mapped[str] = mapped_column(String(64))
 
 

@@ -28,6 +28,19 @@ means rewriting that one call site, not the schema, id_resolution, features or
 pricing modules, which all operate on the same `TmPlayer`/`UnderstatPlayer` shapes
 regardless of where they came from.
 
+**Update, Phase 8 — this promise was kept**: `pipeline/real_source.py` now loads the
+real, public dcaribou/transfermarkt-datasets export and emits the exact same
+`SyntheticWorld` shape; `pipeline/data_source.py` is the swap point
+(`DATA_SOURCE=real`), and `pipeline/ingest.py`/`pipeline/pricing.py` import through it
+instead of `synthetic_source` directly. One real consequence of there being a single
+real source instead of two deliberately-disagreeing ones: `id_resolution.resolve()`
+now matches ~100% of players at `dob_club_exact`/score 1.0 instead of exercising its
+fuzzy path, since there's no second, independently-perturbed name source anymore —
+expected, not a regression; the fuzzy-matching logic itself is still covered by
+`tests/test_pipeline.py` against the synthetic two-source world, which is still the
+default (`DATA_SOURCE` unset) and still what the test suite runs against. Full
+findings and numbers: `docs/PROGRESS.md` Phase 8.
+
 ## SQLite fallback for the vector/relational store
 
 **What**: `db/vector_type.py` stores embeddings as `vector(dim)` on Postgres and as a

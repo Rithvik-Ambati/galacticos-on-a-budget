@@ -55,6 +55,8 @@ untested live.
 pip install -e ".[dev,eval]"
 python -m pipeline.run_all        # seeds dev.db: synthetic players, prices, team
                                    # profiles, embedded documents
+# or, against real player data (see "Real data" below):
+#   python -m pipeline.download_real_data && DATA_SOURCE=real python -m pipeline.run_all
 uvicorn api.main:app --reload --port 8000
 
 # frontend, in a second shell
@@ -89,16 +91,32 @@ evals.run_all`, output in `evals/reports/baseline.json`):
 | Faithfulness (RAGAS) | **not run** — needs the same human-written golden chat set | ≥ 0.90 |
 | Rating v2 vs. v1 backtest | **not attempted** — needs real historical match results; this build has no event-level data source (see DECISIONS.md) | beats v1 baseline |
 
-The MAE and correlation numbers come from `pipeline.pricing`/`pipeline.features`
-running against the synthetic world in `pipeline/synthetic_source.py` — read
-`docs/DECISIONS.md` before citing them as anything other than "the pipeline code
-works and produces sane numbers on fake data."
+The MAE and correlation numbers above come from `pipeline.pricing`/`pipeline.features`
+running against the synthetic world in `pipeline/synthetic_source.py` (the default) —
+read `docs/DECISIONS.md` before citing them as anything other than "the pipeline code
+works and produces sane numbers on fake data." The same pipeline run against real data
+(`DATA_SOURCE=real`, see above) gets a pricing MAE of ~€3.33M (40.7% of mean real
+market value, in line with the synthetic number) and ability scores spanning 4.1-96.5
+(not collapsed) — full numbers in `docs/PROGRESS.md` Phase 8.
+
+## Real data
+
+`DATA_SOURCE=real` swaps the whole pipeline onto the real, public
+[dcaribou/transfermarkt-datasets](https://github.com/dcaribou/transfermarkt-datasets)
+export (CC0) instead of the synthetic generator — real players, real nationalities,
+real market values, real WC2026/UCL2025-26 squads and minutes/goals/assists. Run
+`python -m pipeline.download_real_data` once first (fetches a 241MB zip into
+`data_raw/`, gitignored). `xg`/`xa` and a handful of advanced per-90s are still
+approximated, since this export has no shot-quality data — see
+`pipeline/real_source.py`'s docstring and `docs/PROGRESS.md` Phase 8 for exactly
+what's real and what's derived.
 
 ## Key design decisions (full detail in `docs/DECISIONS.md`)
 
-- **Synthetic Transfermarkt/Understat data**, not the real sources — two
+- **Synthetic Transfermarkt/Understat data by default**, not the real sources — two
   deliberately-disagreeing record sets so `pipeline/id_resolution.py` does real
-  fuzzy-matching work instead of a no-op.
+  fuzzy-matching work instead of a no-op. `DATA_SOURCE=real` (see above) swaps in the
+  real thing; the test suite still runs against synthetic.
 - **SQLite fallback** behind the same `VectorType`/`DATABASE_URL` the Postgres path
   uses, because there was no live Postgres to develop against.
 - **LangGraph + `MemorySaver`**, not the Postgres checkpointer — sessions don't
@@ -114,8 +132,6 @@ works and produces sane numbers on fake data."
 
 ## What's not done
 
-- Real Transfermarkt/Understat ingestion (swap-in point: `pipeline/ingest.py`'s one
-  call to `pipeline.synthetic_source.generate()`).
 - The two human-written golden sets (`evals/golden/retrieval.jsonl`,
   `evals/golden/chat.jsonl`) — the runners are built and tested against them being
   empty; CLAUDE.md reserves actually writing them for a human.

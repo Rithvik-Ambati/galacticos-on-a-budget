@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.game import BUDGET_EUR, PRICE_FLOOR_EUR, PRICE_ROUND_EUR, PRICING_ABILITY_WEIGHT, PRICING_MARKET_WEIGHT
 from db.models import Player, PlayerFeatures, PlayerStatsSeason, Price
+from pipeline.data_source import generate as generate_world
 from pipeline.features import _group
-from pipeline.synthetic_source import generate as generate_synthetic_world
 
 POSITION_GROUPS = ("GK", "DF", "MF", "FW")
 
@@ -75,7 +75,7 @@ async def compute_prices(
     # Transfermarkt in production; this build's stand-in source is the synthetic
     # world's own market_value_eur (docs/DECISIONS.md), looked up by player_id.
     if market_values is None:
-        world = generate_synthetic_world(seed=seed)
+        world = generate_world(seed=seed)
         market_values = {p.tm_id: p.market_value_eur for p in world.tm_players}
 
     club_ability: dict[str, list[float]] = {}

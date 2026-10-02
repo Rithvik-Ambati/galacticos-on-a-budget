@@ -14,12 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from db.bootstrap import create_all
 from db.models import Club, NationalTeam, Player, PlayerIdMap, PlayerStatsSeason, Squad
-from pipeline import id_resolution, synthetic_source
+from pipeline import data_source, id_resolution
 
 TOP_LEAGUE_COEFFICIENT = 1.0
 OTHER_LEAGUE_COEFFICIENT = 0.82
 FALLBACK_LEAGUE_STRENGTH = 0.5  # below this, pipeline/features.py flags low confidence
-TOP_LEAGUE_COUNTRIES = {"ESP", "ENG", "GER", "ITA", "FRA"}
+# Synthetic data uses ISO3 codes; pipeline/real_source.py uses full country names
+# (from the real dataset's competitions.csv) -- both are valid "club['country']"
+# values depending on DATA_SOURCE, so this set covers both.
+TOP_LEAGUE_COUNTRIES = {"ESP", "ENG", "GER", "ITA", "FRA", "Spain", "England", "Germany", "Italy", "France"}
 
 
 @dataclass
@@ -38,7 +41,7 @@ async def run_ingest(engine: AsyncEngine, *, seed: int | None = None, output_dir
     os.makedirs(output_dir, exist_ok=True)
     await create_all(engine)
 
-    world = synthetic_source.generate(seed=seed)
+    world = data_source.generate(seed=seed)
     matches, unresolved = id_resolution.resolve(world.tm_players, world.understat_players, world.clubs)
 
     csv_path = os.path.join(output_dir, "unresolved_ids.csv")

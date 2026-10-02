@@ -257,3 +257,91 @@ Verified: `python -m evals.run_all` run for real against this build's seeded
 `dev.db` — 10/10 samples, 100% numeric-validator pass rate on both coach and match
 reports, 0 fallback triggers. `tests/test_evals.py` (3 tests) covers both runners
 mechanically, including the "no golden set / no embedder" degraded paths.
+
+## Phase 8 — Real data integration
+
+Replaced the synthetic Transfermarkt/Understat stand-in with the real, public
+dcaribou/transfermarkt-datasets export (CC0; `pipeline/download_real_data.py` fetches
+it). Built `pipeline/real_source.py`, matching `synthetic_source.generate()`'s exact
+`SyntheticWorld` shape, and `pipeline/data_source.py` as the single swap point
+(`DATA_SOURCE=real` env var) — `pipeline/ingest.py` and `pipeline/pricing.py` now
+import through it instead of `synthetic_source` directly, exactly the one-call-site
+promise `docs/DECISIONS.md` made when the synthetic generator was built.
+
+What's genuinely real now: player identity, nationality, position, age, current club,
+and **market value** (50k+ real players); real WC2026 squads (derived from actual
+June 2026 match lineups, not the dataset's own sparse `current_national_team_id`
+field); real 2025/26 UCL club rosters; real minutes/goals/assists/cards (aggregated
+from `appearances.csv` over a ~14-month window). Not real: there is no shot-quality or
+event-level data source in this export, so xG/xA are approximated as goals/assists,
+and the remaining advanced per-90s (tackles, aerials, progressive carries, etc.) are
+synthesized from each player's real market-value percentile within their position
+group — a real signal driving the same noise-added technique `synthetic_source.py`
+uses, not fabricated from nothing. This is stated plainly in `real_source.py`'s
+docstring so it's never mistaken for real StatsBomb-grade data.
+
+**Three real data-quality bugs found and fixed, each caught by checking actual
+numbers rather than trusting the first pass** (the same discipline as the Phase 1
+WC-squad-field finding):
+1. First version force-assigned any candidate player whose real club wasn't one of
+   the 36 UCL 2025/26 clubs to an arbitrary UCL club (to satisfy `ingest.py`'s
+   `club_by_id[tm.club_id]` lookup, which requires every player's club to exist in
+   `world.clubs`). Caught before it ran — fixed by building `clubs` from every club a
+   selected player is *actually* at (big-5-but-non-UCL clubs included), not just the
+   UCL 36.
+2. With that fixed, several real WC2026 squads still came back at 6-9 players instead
+   of ~26 (South Africa, Qatar, Egypt, Iran, Iraq, Jordan, Uzbekistan, Panama) —
+   their domestic leagues aren't in this dataset's `clubs.csv`/`competitions.csv`
+   coverage (mostly European + a handful of others), so those players' `current_club_id`
+   pointed at clubs with no metadata row at all. Fixed by giving such players a
+   minimal real-data placeholder club (name from `players.csv`'s own
+   `current_club_name` column, country honestly marked "Unknown (league not in
+   dataset)") instead of silently dropping real WC2026 squad members.
+3. 3 of the 36 real UCL clubs (smaller-league debutants, e.g. first-time European-cup
+   sides) were still thin (1-9 players) via `current_club_id` alone, because
+   `players.csv` itself has incomplete profiles for them. Fixed the same way the
+   WC2026 squads were fixed in Phase 1 — derive squad membership from real 2025/26
+   UCL match lineups (`game_lineups.csv`) too, unioned with the `current_club_id`
+   path. Final squads: 43/48 WC2026 teams at 24-26 real players each (5 teams dropped
+   entirely — their ids never appear in `national_teams.csv`, so no display name
+   exists for them; honest to drop rather than guess one), all 36 UCL clubs at
+   15-50 real players each.
+
+`db/models.py`: widened `Player.nationality` / `Club.country` / `NationalTeam.country`
+from `String(3)` (ISO codes, synthetic-only) to `String(64)` to hold real full country
+names ("Democratic Republic of the Congo"). `pipeline/ingest.py`'s
+`TOP_LEAGUE_COUNTRIES` now covers both the synthetic ISO codes and the real dataset's
+full country names for the big five leagues, since `club["country"]` can be either
+depending on `DATA_SOURCE`.
+
+Verified end-to-end against a fresh SQLite db (`DATA_SOURCE=real python -m
+pipeline.run_all`, seed 42): 4,755 players, 490 clubs, 43 national teams, 2,466 squad
+rows, 3,842/3,842 matched by `id_resolution` (0 unresolved — expected, since there's
+only one real source feeding both the "TM" and "Understat" sides here, so every match
+is `dob_club_exact`/`dob_club_fuzzy` at score 1.0, not the deliberate-disagreement
+case Phase 1's synthetic two-source setup exercises), pricing MAE ~€3.33M (40.7% of
+mean real market value — in line with the synthetic baseline's ~40.4%, so the
+pricing model generalizes rather than overfitting the synthetic distribution),
+ability scores spanning 4.1-96.5 (mean 49.6 — not collapsed to a constant, the
+Phase 2 bug class this build is specifically alert to). `ruff check .` and `mypy
+engine rag llm pipeline db config api evals` both clean. Full `pytest` suite (69
+tests, all written against the default synthetic path) still passes unchanged.
+
+**Manual browser playthrough against the real data** (`cp dev_real.db dev.db`, real
+`uvicorn`/`npm run dev`): drew a real opponent (Ecuador); scouting report correctly
+surfaced real current Ecuador internationals as danger players (Willian Pacho, Piero
+Hincapié, Moisés Caicedo — real positions, sane non-collapsed ability scores);
+built an 11-player XI from real, currently-active elite players (Dembélé, Wirtz,
+Yamal, Donnarumma, Saliba, ...) at real transfermarkt-derived prices, €91M under
+budget; Coach's Report returned a 95.1/100 rating, a 54.2%/22.4%/23.4% simulated
+win/draw/loss split, and correctly flagged genuinely out-of-position picks (a CB
+played at LB) with real, priced, budget-legal swap suggestions (real alternative
+players, not placeholders). Confirms the full stack — pipeline, engine, API, frontend
+— works end-to-end on real data, not just that the ingest step runs.
+
+**Still not done, same as Phase 7, unchanged by this phase**: the two human-written
+golden eval sets (explicit user instruction: leave them for a human to write) and any
+deployment (explicit user instruction: don't deploy yet). Rating v2 is also still not
+attempted — real match results (`games.csv`) now exist and would support a genuine
+backtest, but building a trained model for it is further work than "integrate real
+data" covers and wasn't requested.

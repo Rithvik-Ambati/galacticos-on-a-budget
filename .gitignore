@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 dev.db
 data/
+data_raw/
 evals/reports/*.json
 .env
 node_modules/
