@@ -170,6 +170,23 @@ class GameSession(Base):
     )
 
 
+class TeamLineupFrequency(Base):
+    """Part 2c (docs/DECISIONS.md "Real opponent lineups from real match
+    frequency"): how many times a player actually started (not just appeared in
+    the squad) at a given position, across real recent matches. Populated only
+    for real data (`pipeline/real_source.py`); empty for synthetic, which has no
+    real match history -- `engine/opponent_lineup.py` falls back to its
+    ability-only builder either way when this table has no rows for a team."""
+
+    __tablename__ = "team_lineup_frequency"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(String(32), index=True)
+    player_id: Mapped[str] = mapped_column(String(32), index=True)
+    position_code: Mapped[str] = mapped_column(String(8))
+    start_count: Mapped[int] = mapped_column(Integer)
+
+
 class IngestMetadata(Base):
     """One row per `pipeline.run_all` run (docs/DECISIONS.md "Synthetic data is no
     longer the silent default"): api/main.py's startup refuses to boot without at

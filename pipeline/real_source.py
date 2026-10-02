@@ -128,6 +128,33 @@ def _load_games_team_sets(data_dir: str) -> tuple[set[str], set[str], set[str], 
     return wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids
 
 
+def _load_starting_lineup_frequency(
+    data_dir: str, game_ids: set[str], candidate_ids: set[str]
+) -> dict[str, dict[tuple[str, str], int]]:
+    """team_id -> {(player_id, position_code): times actually started (not just
+    subbed on) at that position across `game_ids` -- Part 2c's "most frequent
+    starters by formation from recent matches." Restricted to `candidate_ids`
+    (players who made the final squad cut) so a since-dropped player's old starts
+    can't ever outrank a current squad member."""
+    counts: dict[str, dict[tuple[str, str], int]] = {}
+    with _open(data_dir, "game_lineups.csv.gz") as f:
+        for row in csv.DictReader(f):
+            if row["type"] != "starting_lineup" or row["game_id"] not in game_ids:
+                continue
+            pid = row["player_id"]
+            if pid not in candidate_ids:
+                continue
+            code = POSITION_CODE_BY_SUB_POSITION.get(row["position"])
+            if code is None:
+                continue  # a handful of rows (~0.4%) use a vaguer label ("Defender",
+                # "midfield", "Attack", "Sweeper") this dataset doesn't give a precise
+                # sub-position for -- skipped rather than guessed, per CLAUDE.md
+            team_counts = counts.setdefault(row["club_id"], {})
+            key = (pid, code)
+            team_counts[key] = team_counts.get(key, 0) + 1
+    return counts
+
+
 def _load_lineup_squads(data_dir: str, game_ids: set[str]) -> dict[str, set[str]]:
     """team_id -> set of player_ids who actually featured in one of `game_ids` --
     far more reliable than `players.current_national_team_id`/`current_club_id` alone,
@@ -318,6 +345,18 @@ def generate(seed: int | None = None, data_dir: str = DEFAULT_DATA_DIR) -> Synth
 
     understat_players = _aggregate_real_stats(data_dir, tm_players, club_rows, seed)
 
+    # Part 2c: how often each candidate actually started (not just appeared in the
+    # squad) at each position, across the same real WC2026/UCL2025-26 matches
+    # already used above -- engine/opponent_lineup.py's "predicted XI" signal.
+    wc_frequency = _load_starting_lineup_frequency(data_dir, wc_game_ids, set(tm_by_id.keys()))
+    ucl_frequency = _load_starting_lineup_frequency(data_dir, ucl_game_ids, set(tm_by_id.keys()))
+    lineup_frequency: dict[str, dict[tuple[str, str], int]] = {
+        f"nt_{tid}": counts for tid, counts in wc_frequency.items() if tid in national_team_rows
+    }
+    for club_id, counts in ucl_frequency.items():
+        if club_id in ucl_squads:
+            lineup_frequency[club_id] = counts
+
     return SyntheticWorld(
         clubs=clubs,
         national_teams=national_teams,
@@ -325,6 +364,7 @@ def generate(seed: int | None = None, data_dir: str = DEFAULT_DATA_DIR) -> Synth
         understat_players=understat_players,
         wc_squads=wc_squads,
         ucl_squads=ucl_squads,
+        lineup_frequency=lineup_frequency,
     )
 
 

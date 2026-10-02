@@ -404,3 +404,66 @@ all-native-positions (no fallback) case, and the genuinely-too-thin-to-field-11
 case, plus the requested property test: for every team in both modes that the
 synthetic seed makes fieldable, the built XI has exactly the 11 formation slots,
 all distinct real squad members.
+
+## Real opponent lineups from real match frequency (Part 2c)
+
+**What**: the opponent's predicted XI is now "most frequent starters by formation
+from recent matches," not purely best-XI-by-ability. `pipeline/real_source.py`'s
+new `_load_starting_lineup_frequency` counts, per candidate player, how many times
+they started (`game_lineups.csv.gz`'s `type == "starting_lineup"`, not just
+appeared as a substitute) at each position code, across the real WC2026/UCL2025-26
+matches already loaded for other stats — reusing `POSITION_CODE_BY_SUB_POSITION`,
+the same position vocabulary already mapped from `players.csv`. Persisted into a
+new `team_lineup_frequency` table (migration `0003_team_lineup_frequency`),
+written by `pipeline/ingest.py`, loaded per-team by
+`pipeline/to_engine.py::load_lineup_frequency`.
+
+`engine/opponent_lineup.py::build_opponent_lineup` now takes an optional
+`frequency` map and, within whichever fallback tier Part 2b's chain already
+selects, ranks candidates by `(start_count_at_this_slot, role_fit_score)` instead
+of `role_fit_score` alone — frequency decides the pick when it's nonzero, role-fit
+only breaks a frequency tie or fills in when nobody in the tier has recorded
+starts. This composes with, rather than overrides, Part 2b's tier order: a
+native-position player with zero recorded starts still outranks an
+out-of-position player, since frequency is only compared within a tier, never
+across tiers.
+
+`graph/nodes.py::draw()` loads this per-opponent frequency map, passes it into
+`build_opponent_lineup`, and labels the result `lineup_source = "real"` when at
+least `config.game.MIN_REAL_LINEUP_SLOTS` (7 of 11) slots were actually won by
+real start-frequency, else `"estimated"` — a handful of frequency-backed slots
+isn't enough to call the whole XI "real." This is the exact same XI object
+`engine.rating`/`engine.counter`/`engine.simulation` already consume (no second,
+possibly-inconsistent lineup computed anywhere); `api/routers.py::scout()` now
+reads this computed value instead of the hardcoded `"estimated"` placeholder it
+shipped with in Part 2b.
+
+Synthetic data has no real match history, so `SyntheticWorld.lineup_frequency` is
+always `None` and every synthetic-seeded team is `"estimated"` — this is the
+intended, documented behaviour (`docs/DECISIONS.md` "Synthetic data is no longer
+the silent default"), not a gap.
+
+**Audit, real data, both modes** (re-ran `pipeline.run_all` with `DATA_SOURCE=real`
+and checked every fieldable team from Part 2b's own audit):
+
+| Mode | Fieldable | `lineup_source="real"` | `lineup_source="estimated"` |
+|---|---|---|---|
+| WC2026 (national teams) | 43 | 37 | 6 |
+| UCL2025-26 (clubs) | 36 | 35 | 1 |
+
+The 6 WC2026 "estimated" teams and 1 UCL2025-26 "estimated" team are squads whose
+candidate pool's recorded WC2026/UCL2025-26 starts don't cover at least 7 of the 11
+formation slots in this dataset (sparse match history for some squad members, not
+a data bug) — they fall back to ability-only selection for those slots, same as
+before Part 2c, and are clearly labelled as such rather than silently presented as
+"real."
+
+**Tests**: `tests/test_opponent_lineup.py` — frequency outranks ability within a
+tier, `real_fill_count` is zero with no frequency data, `real_fill_count` only
+counts slots actually won by frequency (not every player with any recorded row),
+`load_lineup_frequency` returns the right counts for the requested team and `{}`
+for an unknown one, and a sanity check on the `MIN_REAL_LINEUP_SLOTS` config
+constant. Full backend suite: 110 passing, ruff/mypy clean. The existing B1
+Playwright check (`frontend/e2e/batch-b.spec.ts`, "opponent's predicted lineup
+renders on the scouting screen") re-run against the same real-seeded DB used for
+the audit above — still passes.

@@ -107,6 +107,11 @@ class SyntheticWorld:
     understat_players: list[UnderstatPlayer]
     wc_squads: dict[str, list[str]]  # team_id -> [tm_id, ...]
     ucl_squads: dict[str, list[str]]  # club_id -> [tm_id, ...]
+    # Part 2c (docs/DECISIONS.md "Real opponent lineups from real match frequency"):
+    # team_id -> {(tm_id, position_code): times started at that position in a real
+    # recent match}. None for synthetic data, which has no real match history --
+    # engine/opponent_lineup.py falls back to its ability-only builder either way.
+    lineup_frequency: dict[str, dict[tuple[str, str], int]] | None = None
 
 
 def _perturbed_name(rng: random.Random, name: str) -> str:

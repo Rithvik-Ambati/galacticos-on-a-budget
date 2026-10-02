@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine as SAAsyncEngine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from config.game import COUNTER_MAX_ROUNDS
+from config.game import COUNTER_MAX_ROUNDS, MIN_REAL_LINEUP_SLOTS
 from db.models import Squad
 from engine.analyse import build_analysis
 from engine.counter import run_counter_round
@@ -33,6 +33,7 @@ from llm.narrator import narrate_coach_report, narrate_match_report
 from llm.provider import get_provider
 from pipeline.to_engine import (
     load_candidate_pool,
+    load_lineup_frequency,
     load_player_card,
     load_squad_player_cards,
     load_squad_player_ids,
@@ -111,14 +112,22 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
 
         async with session_factory() as session:
             squad = await load_squad_player_cards(session, opponent_team_id)
-        lineup_result = build_opponent_lineup(squad)
+            frequency = await load_lineup_frequency(session, opponent_team_id)
+        lineup_result = build_opponent_lineup(squad, frequency=frequency)
         assert lineup_result is not None  # guaranteed by the fieldable_teams filter above
+
+        # Part 2c (docs/DECISIONS.md "Real opponent lineups from real match
+        # frequency"): "real" only once enough slots were actually won by recorded
+        # starts, not just one or two -- below that this is still mostly a
+        # best-XI-by-ability guess and must say so.
+        lineup_source = "real" if lineup_result.real_fill_count >= MIN_REAL_LINEUP_SLOTS else "estimated"
 
         return {
             "opponent_team_id": opponent_team_id,
             "opponent_formation": OPPONENT_INITIAL_FORMATION,
             "opponent_lineup_assignments": lineup_result.assignments,
             "opponent_out_of_position": [f.model_dump() for f in lineup_result.out_of_position],
+            "opponent_lineup_source": lineup_source,
             "counter_round": 0,
             "counter_history": [],
         }

@@ -140,6 +140,7 @@ class OutOfPositionFill(BaseModel):
 class OpponentLineupResult(BaseModel):
     assignments: dict[str, str]  # slot_id -> player_id
     out_of_position: list[OutOfPositionFill] = Field(default_factory=list)
+    real_fill_count: int = 0  # Part 2c: slots won by real start-frequency, not ability
 
 
 class SwapSuggestion(BaseModel):

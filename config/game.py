@@ -40,6 +40,14 @@ POSITION_GROUP_FALLBACK_CHAIN: dict[str, tuple[str, ...]] = {
     "FW": ("FW", "MF", "DF"),
 }
 
+# Part 2c (docs/DECISIONS.md "Real opponent lineups from real match frequency"):
+# minimum number of the 11 slots that must be filled by a real most-frequent-starter
+# match (not an ability-only fallback) before the predicted XI is labelled
+# lineup_source "real" rather than "estimated". Out of 11 slots, not a fraction --
+# chosen so a squad with a couple of genuinely undocumented bench slots can still
+# earn "real" if the rest of the XI is solidly frequency-backed.
+MIN_REAL_LINEUP_SLOTS: int = 7
+
 PRICE_FLOOR_EUR: int = 1_000_000
 PRICE_ROUND_EUR: int = 1_000_000
 PRICING_ABILITY_WEIGHT: float = 0.7

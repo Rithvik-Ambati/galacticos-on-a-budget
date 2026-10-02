@@ -13,7 +13,16 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from db.bootstrap import create_all
-from db.models import Club, IngestMetadata, NationalTeam, Player, PlayerIdMap, PlayerStatsSeason, Squad
+from db.models import (
+    Club,
+    IngestMetadata,
+    NationalTeam,
+    Player,
+    PlayerIdMap,
+    PlayerStatsSeason,
+    Squad,
+    TeamLineupFrequency,
+)
 from pipeline import data_source, id_resolution, real_source
 
 TOP_LEAGUE_COEFFICIENT = 1.0
@@ -102,6 +111,14 @@ async def run_ingest(engine: AsyncEngine, *, seed: int | None = None, output_dir
                 for pid in player_ids
             )
             squad_rows += len(player_ids)
+
+        # Part 2c: empty for synthetic data (world.lineup_frequency is None --
+        # there's no real match history to count starts from).
+        for team_id, counts in (world.lineup_frequency or {}).items():
+            session.add_all(
+                TeamLineupFrequency(team_id=team_id, player_id=pid, position_code=code, start_count=n)
+                for (pid, code), n in counts.items()
+            )
 
         stats_rows = []
         for m in matches:

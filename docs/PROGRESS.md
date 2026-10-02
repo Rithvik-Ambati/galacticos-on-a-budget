@@ -509,3 +509,46 @@ No dedicated Playwright check was added for the (rare -- 3/43, 2/36) scouting-pa
 out-of-position banner specifically; the existing Batch A/B Playwright suite
 already exercises `draw()`/Scouting repeatedly and would catch a crash, but
 doesn't force the banner's specific content to appear.
+
+### Part 2c — real opponent lineups from real match-start frequency
+
+Full detail in `docs/DECISIONS.md` "Real opponent lineups from real match
+frequency". `pipeline/real_source.py` now counts real starting-lineup appearances
+per candidate per position from `game_lineups.csv.gz`, persisted into a new
+`team_lineup_frequency` table (migration `0003_team_lineup_frequency`).
+`engine/opponent_lineup.py::build_opponent_lineup` ranks candidates within each
+Part 2b fallback tier by that start count first, role-fit as the tiebreak --
+"most frequent starters," not "most able players." `graph/nodes.py::draw()`
+labels the opponent XI `lineup_source="real"` once at least
+`config.game.MIN_REAL_LINEUP_SLOTS` (7/11) slots were won by real starts, else
+`"estimated"`; `api/routers.py::scout()` now returns this computed value instead
+of the hardcoded placeholder it shipped with in Part 2b. Same XI object the
+rating/counter/simulation engines already consume -- no second lineup computed
+anywhere.
+
+**Audit, real data, both modes** (re-ran `pipeline.run_all` with `DATA_SOURCE=real`):
+
+| Mode | Fieldable | `"real"` | `"estimated"` |
+|---|---|---|---|
+| WC2026 (national teams) | 43 | 37 | 6 |
+| UCL2025-26 (clubs) | 36 | 35 | 1 |
+
+**Tests**: 6 new cases in `tests/test_opponent_lineup.py` -- frequency outranks
+ability within a tier, `real_fill_count` zero with no frequency data, it only
+counts slots actually won by frequency, `load_lineup_frequency`'s per-team lookup
+(including the unknown-team empty case), and a sanity check on
+`MIN_REAL_LINEUP_SLOTS`. Full backend suite: 110 passing, ruff/mypy clean. Re-ran
+the existing B1 Playwright check (`frontend/e2e/batch-b.spec.ts`) against the same
+real-seeded DB used for the audit above -- still passes, alongside the rest of
+the Batch A/B suite (6/6).
+
+**Environment note**: this session's Windows temp drive (`C:`) was at 0 bytes
+free, which made SQLite-backed tests fail with "database or disk is full" when
+pytest's `tmp_path` fixture defaulted there. Worked around with
+`pytest --basetemp=<path on D:>` (not a code change, not committed -- `.pytest_tmp/`
+added to `.gitignore` in case it's reused). `frontend/e2e/playwright.config.ts`'s
+`baseURL` is `http://127.0.0.1:5173`; this machine's `vite` default bind resolved
+to `::1` (IPv6) only, which the Playwright run connects to over IPv4 and failed
+against with `ERR_CONNECTION_REFUSED` -- resolved locally by starting vite with
+`--host 127.0.0.1`. Neither is a repository bug; noted here only because the next
+session hitting the same local Playwright run will see the same symptom.

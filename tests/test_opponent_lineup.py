@@ -12,15 +12,15 @@ os.environ["DATA_SOURCE"] = "synthetic"
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from config.game import OPPONENT_FORMATION_SLOTS
-from db.models import Club, NationalTeam
+from config.game import MIN_REAL_LINEUP_SLOTS, OPPONENT_FORMATION_SLOTS
+from db.models import Club, NationalTeam, TeamLineupFrequency
 from engine.opponent_lineup import build_opponent_lineup
 from engine.schemas import PlayerCard
 from pipeline.features import compute_features
 from pipeline.ingest import run_ingest
 from pipeline.pricing import compute_prices
 from pipeline.team_profiles import compute_team_profiles
-from pipeline.to_engine import load_squad_player_cards
+from pipeline.to_engine import load_lineup_frequency, load_squad_player_cards
 
 SEED = 42
 
@@ -52,6 +52,82 @@ def test_fills_a_thin_position_group_from_the_fallback_chain() -> None:
 def test_returns_none_when_squad_cannot_field_eleven_at_all() -> None:
     squad = [_card("gk", "GK"), _card("df1", "DF"), _card("mf1", "MF")]  # 3 players total
     assert build_opponent_lineup(squad) is None
+
+
+def test_frequency_ranks_above_ability_within_a_tier() -> None:
+    # low_ability has fewer real starts recorded at ST but still wins the slot --
+    # "most frequent starters," not "most able players" (docs/DECISIONS.md Part 2c).
+    squad = [
+        _card("gk", "GK"),
+        *[_card(f"df{i}", "DF") for i in range(4)],
+        *[_card(f"mf{i}", "MF") for i in range(6)],
+        _card("high_ability", "FW", ability=95.0),
+        _card("low_ability", "FW", ability=60.0),
+    ]
+    frequency = {("low_ability", "ST"): 8, ("high_ability", "ST"): 0}
+    result = build_opponent_lineup(squad, frequency=frequency)
+    assert result is not None
+    assert result.assignments["ST"] == "low_ability"
+    assert result.real_fill_count == 1
+
+
+def test_real_fill_count_is_zero_with_no_frequency_data() -> None:
+    squad = [
+        _card("gk", "GK"),
+        *[_card(f"df{i}", "DF") for i in range(4)],
+        *[_card(f"mf{i}", "MF") for i in range(6)],
+        _card("fw1", "FW"),
+    ]
+    result = build_opponent_lineup(squad)
+    assert result is not None
+    assert result.real_fill_count == 0
+
+
+def test_real_fill_count_only_counts_slots_actually_won_by_frequency() -> None:
+    squad = [
+        _card("gk", "GK"),
+        *[_card(f"df{i}", "DF") for i in range(4)],
+        *[_card(f"mf{i}", "MF") for i in range(6)],
+        _card("fw1", "FW"),
+    ]
+    # Frequency recorded for a player/position combo that never gets picked for
+    # that slot (fw1 only ever competes for ST, not DM) must not inflate the count.
+    frequency = {("fw1", "DM"): 5}
+    result = build_opponent_lineup(squad, frequency=frequency)
+    assert result is not None
+    assert result.real_fill_count == 0
+
+
+async def test_load_lineup_frequency_returns_counts_for_the_requested_team(tmp_path) -> None:
+    db_path = tmp_path / "lineup_frequency_test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    from db.models import Base
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        session.add_all(
+            [
+                TeamLineupFrequency(team_id="nt_ESP", player_id="p1", position_code="ST", start_count=6),
+                TeamLineupFrequency(team_id="nt_ESP", player_id="p2", position_code="CB", start_count=4),
+                TeamLineupFrequency(team_id="nt_FRA", player_id="p3", position_code="ST", start_count=9),
+            ]
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        esp = await load_lineup_frequency(session, "nt_ESP")
+        missing = await load_lineup_frequency(session, "nt_BRA")
+
+    assert esp == {("p1", "ST"): 6, ("p2", "CB"): 4}
+    assert missing == {}
+
+
+def test_min_real_lineup_slots_threshold_is_positive() -> None:
+    # Sanity check on the config constant graph/nodes.py's draw() compares
+    # real_fill_count against to decide lineup_source "real" vs "estimated".
+    assert 0 < MIN_REAL_LINEUP_SLOTS <= len(OPPONENT_FORMATION_SLOTS)
 
 
 def test_no_out_of_position_fills_when_squad_has_full_depth() -> None:

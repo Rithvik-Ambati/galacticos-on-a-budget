@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Club, NationalTeam, Player, PlayerFeatures, PlayerStatsSeason, Price, Squad
+from db.models import Club, NationalTeam, Player, PlayerFeatures, PlayerStatsSeason, Price, Squad, TeamLineupFrequency
 from db.models import TeamProfile as TeamProfileRow
 from engine.schemas import DangerPlayer, PlayerCard
 from engine.schemas import TeamProfile as EngineTeamProfile
@@ -97,6 +97,18 @@ async def load_squad_player_ids(session: AsyncSession, team_id: str) -> set[str]
 async def load_squad_player_cards(session: AsyncSession, team_id: str, snapshot: str = "2026") -> list[PlayerCard]:
     ids = await load_squad_player_ids(session, team_id)
     return [c for pid in ids if (c := await load_player_card(session, pid, snapshot)) is not None]
+
+
+async def load_lineup_frequency(session: AsyncSession, team_id: str) -> dict[tuple[str, str], int]:
+    """Part 2c: empty for synthetic data or any team with no real match history --
+    engine/opponent_lineup.py falls back to its ability-only builder either way."""
+    rows = (
+        await session.execute(
+            select(TeamLineupFrequency.player_id, TeamLineupFrequency.position_code, TeamLineupFrequency.start_count)
+            .where(TeamLineupFrequency.team_id == team_id)
+        )
+    ).all()
+    return {(player_id, position_code): count for player_id, position_code, count in rows}
 
 
 async def load_team_profile(
