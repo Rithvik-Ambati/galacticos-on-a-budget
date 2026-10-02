@@ -467,3 +467,48 @@ constant. Full backend suite: 110 passing, ruff/mypy clean. The existing B1
 Playwright check (`frontend/e2e/batch-b.spec.ts`, "opponent's predicted lineup
 renders on the scouting screen") re-run against the same real-seeded DB used for
 the audit above — still passes.
+
+## RAGAS could not be installed in this environment (Part 3)
+
+**What**: `evals/faithfulness_eval.py` is written against RAGAS's `Faithfulness`
+metric (API inspected directly from the 0.4.3 wheel, since the package itself
+wouldn't install here), with a `StubProvider` path that needs no RAGAS/LLM call
+at all — `StubProvider.complete` is the identity function (`llm/provider.py`), so
+the "restyled" report text *is* the engine-grounded template verbatim, faithful
+by construction. That path is the one `make eval`/CI actually run, and it's fully
+exercised and unit-tested.
+
+**Why the live path couldn't be run here**: `ragas` declares `scikit-network` as
+a hard (non-optional, not behind an extra) dependency. PyPI has no prebuilt wheel
+for `scikit-network` on any platform — every install builds its Cython
+extensions from source, which needs a C++ toolchain (Microsoft Visual C++ Build
+Tools on Windows). This machine doesn't have one, and installing a multi-GB
+system build toolchain is outside this task's scope. `deepeval` (used by
+`evals/numeric_eval.py`'s custom metric) has no such dependency and installed
+cleanly.
+
+**What this means for the project owner**: `pip install -e .[eval]` may still
+fail on a Windows machine without a C++ toolchain for the same reason. On a
+Linux CI runner or a machine with the build tools installed, it should install
+and run normally — nothing in `faithfulness_eval.py` is Windows-specific, the
+blocker is purely scikit-network's missing wheel. If `ragas` genuinely can't be
+installed in the target environment, `run_faithfulness_eval` already degrades to
+printing a clear message and returning `None` rather than crashing.
+
+## Golden-set templates carry 2 labelled example rows, not zero
+
+**What**: `evals/golden/retrieval_queries.jsonl` and
+`evals/golden/chat_questions.jsonl` (renamed from `retrieval.jsonl`/`chat.jsonl`,
+both genuinely empty at the time of rename) each ship with exactly 2 rows marked
+`"is_example": true`. Every loader (`evals/retrieval_eval.py::load_golden`, and
+anything built on top of it) filters that field out before scoring, so these
+rows are never treated as real judged data and a file with only example rows
+still counts as empty for every "skip cleanly" check.
+
+**Why**: CLAUDE.md says golden sets are human-written and "do not generate or
+edit expected answers" — but the project owner's own Part 3 instructions asked
+for "golden set templates (empty, with schema + 2 example lines each)". These
+two aren't in conflict: the example rows are clearly labelled illustrations of
+the file format, not fabricated ground truth being passed off as real, and the
+`is_example` filter means they can never silently inflate a real evaluation
+run's numbers.

@@ -1,0 +1,2 @@
+{"is_example": true, "query": "left-sided defender good in the air", "relevant_doc_ids": ["player_profile:EXAMPLE_p_123", "player_profile:EXAMPLE_p_456"], "doc_type": "player_profile"}
+{"is_example": true, "query": "who leads this squad in assists", "relevant_doc_ids": ["team_profile:EXAMPLE_nt_ESP"], "doc_type": null}

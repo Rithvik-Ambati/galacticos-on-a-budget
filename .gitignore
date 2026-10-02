@@ -26,6 +26,7 @@ data_raw/
 embeddings/
 *.index
 *.faiss
+.hf_cache/
 
 node_modules/
 dist/
@@ -39,9 +40,10 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
 
-# eval output (generated, not source) -- evals/baselines/ is NOT ignored: CI's
-# regression gate (docs/PROGRESS.md Phase 6c Part 4) compares against it, so
-# baseline JSONs must be committed.
+# eval output (generated, not source). evals/baselines/ is deliberately NOT
+# listed here and must stay tracked: evals/run_all.py's CI regression gate reads
+# the committed evals/baselines/baseline.json to detect a Recall@10 drop, which
+# only works if that file survives a fresh checkout.
 evals/reports/*.json
 
 # Langfuse / Postgres local bind-mount volumes, if ever used instead of named

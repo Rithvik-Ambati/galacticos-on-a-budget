@@ -552,3 +552,91 @@ to `::1` (IPv6) only, which the Playwright run connects to over IPv4 and failed
 against with `ERR_CONNECTION_REFUSED` -- resolved locally by starting vite with
 `--host 127.0.0.1`. Neither is a repository bug; noted here only because the next
 session hitting the same local Playwright run will see the same symptom.
+
+## Part 3 -- evaluation suite
+
+Most of the scaffolding (`evals/numeric_eval.py`, `evals/retrieval_eval.py`,
+`evals/run_all.py`, `evals/golden/`) already existed from an earlier session;
+this pass filled the remaining gaps against the spec and fixed what it found.
+
+- **Golden set templates renamed and filled with 2 example rows each**:
+  `evals/golden/retrieval_queries.jsonl` and `evals/golden/chat_questions.jsonl`
+  (previously `retrieval.jsonl`/`chat.jsonl`, both genuinely empty). Each example
+  row carries `"is_example": true`; every runner that reads these files filters
+  that field out before scoring, so a file with only example rows is still
+  treated as an empty golden set (`evals/golden/README.md`). CLAUDE.md's "golden
+  sets are human-written, never generate or edit expected answers" is unaffected
+  -- these are illustrative schema rows, not judged answers, and are never scored.
+- **`evals/retrieval_eval.py`**: added `render_ablation_table()` -- the markdown
+  Recall@10/MRR/nDCG@10 table (best nDCG@10 bolded) that `run_all.py`'s console
+  output and this doc's evaluation-results section both link to, plus a
+  `__main__` entrypoint so `make eval-retrieval` runs it standalone.
+- **`evals/embedding_benchmark.py`** (new): the same three metrics plus p50/p95
+  query-embedding latency, for BAAI/bge-small-en-v1.5 (the production default),
+  BAAI/bge-base-en-v1.5 and intfloat/e5-base-v2 -- the exact comparison
+  `rag/embeddings.py`'s own docstring cites as the reason bge-small was chosen.
+  Corpus and queries are batch-encoded in memory for the comparison only; nothing
+  is ever written to `documents.embedding` (production stays on whatever the
+  real ingestion pipeline set). Skips cleanly with an empty golden set, same as
+  every other runner.
+- **`evals/faithfulness_eval.py`** (new): RAGAS's `Faithfulness` metric over the
+  same coach/match report samples `numeric_eval.py` uses (factored out into new
+  `evals/_report_samples.py` so the two evals can't drift on how a sample is
+  built). Under `StubProvider` this reports 1.0 by construction with no RAGAS/LLM
+  call at all (`StubProvider.complete` is the identity function, so the
+  "restyled" text IS the engine-grounded template verbatim) -- no network, no
+  cost, nothing for CI to accidentally run live. Under a live Anthropic provider
+  it actually invokes RAGAS, judged by that same provider, via a small
+  `BaseRagasLLM` wrapper (`_build_ragas_llm`) that avoids needing
+  `langchain-anthropic` as a dependency.
+  **Known environment limitation**: `ragas` could not be installed in this
+  session -- one of its own hard (non-optional) dependencies, `scikit-network`,
+  ships no prebuilt wheel for any platform and needs a C++ build toolchain
+  (Microsoft Visual C++ Build Tools) to compile from source, which this machine
+  doesn't have and which installing is outside this task's scope. The live-
+  provider code path is written against RAGAS 0.4.3's documented API (inspected
+  directly from the downloaded wheel) but could not be executed end-to-end here.
+  The `StubProvider` path (the one CI and `make eval` actually exercise) was
+  fully run and is unit-tested.
+- **`evals/numeric_eval.py`**: enhanced with a DeepEval custom metric
+  (`NumericFaithfulnessMetric`, `deepeval` installed cleanly, no build-toolchain
+  issue) wrapping `llm/validator.py::validate_numbers` -- deterministic, no LLM
+  judge, usable with DeepEval's own `assert_test`/`evaluate` tooling. Reports two
+  new fields, `deepeval_coach_score`/`deepeval_match_score`: an independent
+  re-check of the FINAL shown text (after any regenerate-then-fallback), expected
+  to always be 1.0, proving the fallback safety net holds even when the LLM's own
+  first/second attempt needed discarding. Also fixed the same "selects every
+  `Club`/`NationalTeam` row instead of just the ones with a real `Squad`" bug
+  Part 2b found in `draw()` -- this eval had the identical pre-existing bug,
+  which only surfaced once run against the full real dataset instead of the
+  smaller synthetic one.
+- **`evals/live_llm_test.py`** (new): refuses to do anything unless
+  `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` are both set (never logs the
+  key itself, only checks its presence); builds one real lineup and narrates both
+  reports through the live model, re-checked by the same numeric validator
+  production uses. Not run in this session, per instruction -- built so the
+  project owner can run it by hand.
+- **Makefile**: `eval-retrieval`, `eval-embeddings`, `eval-faithfulness`,
+  `eval-numeric`, `eval-live` (each script standalone) and `eval` (numeric +
+  retrieval + faithfulness via `run_all.py`, plus the embedding benchmark --
+  everything except `eval-live`, which nothing else depends on).
+- **Fixed a baseline/regression-gate bug found while verifying this**:
+  `evals/run_all.py` wrote its baseline to `evals/reports/baseline.json`, but
+  `.gitignore` ignores everything under `evals/reports/` -- so the CI regression
+  gate Part 4 needs ("fail if Recall@10 drops >2 points vs baseline") had nothing
+  committed to compare against on a fresh checkout, and the drop check itself was
+  never actually implemented (the threshold constant existed but nothing read
+  it). Moved the baseline to `evals/baselines/baseline.json` (tracked, per the
+  original spec), and `run_all.py` now reads the previously committed baseline's
+  Recall@10 for the winning method and fails if it dropped more than
+  `RECALL_DROP_THRESHOLD` before overwriting it with the new run's numbers.
+
+**Verification**: full backend suite 119 passing, ruff/mypy clean. Ran
+`python -m evals.run_all` end-to-end against the real-seeded DB from Part 2c --
+numeric eval 1.0/1.0 (both pass rate and DeepEval score), faithfulness 1.0/1.0
+(stub-by-construction), retrieval skipped cleanly (golden set still has only its
+2 example rows -- filling it with real queries is on the project owner, per
+CLAUDE.md). `evals/reports/baseline.json` written. Smoke-tested
+`embedding_benchmark.py` directly against the real document corpus with a
+synthetic one-query golden set (not committed) to confirm the batched-encoding
+path actually ranks correctly end-to-end before relying on it.

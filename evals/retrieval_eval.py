@@ -16,7 +16,7 @@ from rag.rerank import Reranker
 from rag.retriever import retrieve_ablation
 
 METHODS = ("bm25", "dense", "hybrid", "hybrid_rerank")
-DEFAULT_GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "golden", "retrieval.jsonl")
+DEFAULT_GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "golden", "retrieval_queries.jsonl")
 
 
 @dataclass
@@ -50,6 +50,8 @@ def load_golden(path: str = DEFAULT_GOLDEN_PATH) -> list[GoldenQuery]:
             if not line:
                 continue
             row = json.loads(line)
+            if row.get("is_example"):
+                continue  # evals/golden/README.md: illustrative rows, never scored
             queries.append(
                 GoldenQuery(
                     query=row["query"],
@@ -118,3 +120,56 @@ async def run_retrieval_eval(
     if report.by_method:
         report.best_method = max(report.by_method, key=lambda m: report.by_method[m].ndcg_at_10)
     return report
+
+
+def render_ablation_table(report: RetrievalEvalReport) -> str:
+    """Markdown table of Recall@10/MRR/nDCG@10 per method, best nDCG@10 bolded --
+    the exact artifact docs/PROGRESS.md and README.md's evaluation-results section
+    link to (never hand-typed numbers)."""
+    if not report.by_method:
+        return "_No retrieval methods evaluated (empty golden set or no embedder/reranker available)._"
+
+    lines = [
+        "| Method | Recall@10 | MRR | nDCG@10 | n_queries |",
+        "|---|---|---|---|---|",
+    ]
+    for method in METHODS:
+        if method not in report.by_method:
+            continue
+        m = report.by_method[method]
+        ndcg_cell = f"**{m.ndcg_at_10:.4f}**" if method == report.best_method else f"{m.ndcg_at_10:.4f}"
+        lines.append(f"| {method} | {m.recall_at_10:.4f} | {m.mrr:.4f} | {ndcg_cell} | {m.n_queries} |")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from db.session import get_engine
+
+    async def _main() -> None:
+        golden = load_golden()
+        if not golden:
+            print(
+                f"No golden set at {DEFAULT_GOLDEN_PATH} (0 queries) -- skipping retrieval eval. "
+                "evals/golden/README.md explains the format."
+            )
+            return
+
+        embedder = reranker = None
+        try:
+            from rag.embeddings import get_embedder
+            from rag.rerank import get_reranker
+
+            embedder, reranker = get_embedder(), get_reranker()
+        except Exception as exc:  # pragma: no cover - environment-dependent
+            print(f"Embedding/reranker models unavailable ({exc}); running BM25-only ablation.")
+
+        session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+        async with session_factory() as session:
+            report = await run_retrieval_eval(session, golden, embedder=embedder, reranker=reranker)
+        print(render_ablation_table(report))
+
+    asyncio.run(_main())

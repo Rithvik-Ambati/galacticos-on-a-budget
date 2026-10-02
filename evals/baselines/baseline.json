@@ -1,0 +1,16 @@
+{
+  "numeric": {
+    "n_samples": 10,
+    "coach_report_pass_rate": 1.0,
+    "match_report_pass_rate": 1.0,
+    "fallback_count": 0,
+    "deepeval_coach_score": 1.0,
+    "deepeval_match_score": 1.0
+  },
+  "faithfulness": {
+    "n_samples": 5,
+    "coach_faithfulness": 1.0,
+    "match_faithfulness": 1.0,
+    "judge": "stub-by-construction"
+  }
+}

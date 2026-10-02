@@ -2,28 +2,57 @@
 generated reports. Unlike retrieval_eval.py, this needs no human-written golden set
 -- "correct" here means "every number in the narrated text matches an engine value",
 which `llm/validator.py` already checks mechanically against the engine's own output.
+
+Wrapped as a DeepEval custom metric (`NumericFaithfulnessMetric`) so this check is
+usable with DeepEval's own `assert_test`/`evaluate` tooling, not just this script --
+deterministic and LLM-free (it calls `llm/validator.py::validate_numbers` directly),
+so it scores identically under the stub or a live provider.
 """
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import select
+from deepeval.metrics import BaseMetric
+from deepeval.test_case import LLMTestCase
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Club, NationalTeam
-from engine.optimizer import find_optimal_lineup
-from engine.optimizer import manager_score as compute_manager_score
-from engine.rating import get_default_rating_model
-from engine.rules import validate_lineup
-from engine.schemas import LineupAnalysis
-from engine.simulation import simulate_match
-from engine.swaps import swaps_by_weakness
-from engine.weaknesses import find_weaknesses
-from llm.narrator import narrate_coach_report, narrate_match_report
-from llm.provider import Provider, get_provider
-from pipeline.to_engine import load_candidate_pool, load_squad_player_ids, load_team_name, load_team_profile
+from evals._report_samples import generate_report_samples
+from llm.provider import Provider
+from llm.validator import validate_numbers
+
+
+class NumericFaithfulnessMetric(BaseMetric):  # type: ignore[no-untyped-call]
+    """Does `test_case.actual_output` contain only numbers that appear in
+    `test_case.metadata["allowed_values"]` (within `llm/validator.py`'s tolerance)?
+    No LLM judge -- a mechanical re-check of the exact guarantee
+    `llm/narrator.py::validate_and_fix`'s regenerate-then-fallback already enforces,
+    expressed as a reusable DeepEval metric instead of a one-off assertion."""
+
+    def __init__(self, threshold: float = 1.0) -> None:
+        self.threshold = threshold
+        self.async_mode = False
+        self.score: float | None = None
+        self.reason: str | None = None
+        self.success: bool | None = None
+
+    @property
+    def __name__(self) -> str:
+        return "Numeric Faithfulness"
+
+    def measure(self, test_case: LLMTestCase, *args: Any, **kwargs: Any) -> float:
+        allowed = set((test_case.metadata or {}).get("allowed_values", []))
+        outcome = validate_numbers(test_case.actual_output or "", allowed)
+        self.score = 1.0 if outcome.passed else 0.0
+        self.reason = (
+            "every number matched an engine value" if outcome.passed else f"unmatched numbers: {outcome.bad_numbers}"
+        )
+        self.success = self.is_successful()
+        return self.score
+
+    async def a_measure(self, test_case: LLMTestCase, *args: Any, **kwargs: Any) -> float:
+        return self.measure(test_case, *args, **kwargs)
 
 
 @dataclass
@@ -32,61 +61,63 @@ class NumericEvalReport:
     coach_report_pass_rate: float
     match_report_pass_rate: float
     fallback_count: int
+    deepeval_coach_score: float = 0.0
+    deepeval_match_score: float = 0.0
 
 
 async def run_numeric_eval(
     session: AsyncSession, *, n_samples: int = 10, seed: int = 42, provider: Provider | None = None
 ) -> NumericEvalReport:
-    provider = provider or get_provider()
-    rating_model = get_default_rating_model()
-    rng = random.Random(seed)
-
-    national_ids = (await session.execute(select(NationalTeam.team_id))).scalars().all()
-    club_ids = (await session.execute(select(Club.club_id))).scalars().all()
-    all_team_ids = [*national_ids, *club_ids]
-    if not all_team_ids:
+    samples = await generate_report_samples(session, n_samples=n_samples, seed=seed, provider=provider)
+    if not samples:
         return NumericEvalReport(n_samples=0, coach_report_pass_rate=0.0, match_report_pass_rate=0.0, fallback_count=0)
 
-    sample_teams = rng.sample(all_team_ids, min(n_samples, len(all_team_ids)))
+    numeric_metric = NumericFaithfulnessMetric()
+    coach_passes = match_passes = fallback_count = 0
+    deepeval_coach_scores: list[float] = []
+    deepeval_match_scores: list[float] = []
 
-    coach_passes = 0
-    match_passes = 0
-    fallback_count = 0
+    for s in samples:
+        coach_passes += int(s.coach_result.passed)
+        match_passes += int(s.match_result.passed)
+        fallback_count += int(s.coach_result.used_fallback) + int(s.match_result.used_fallback)
 
-    for team_id in sample_teams:
-        opponent_ids = await load_squad_player_ids(session, team_id)
-        pool = await load_candidate_pool(session, exclude_ids=opponent_ids, limit=400)
-        lineup = find_optimal_lineup("4-3-3", pool, opponent_ids, time_limit_seconds=5.0)
-        if lineup is None:
-            continue
-
-        opponent_name = await load_team_name(session, team_id)
-        opponent_profile = await load_team_profile(session, team_id, opponent_name, "4-2-3-1")
-
-        rating = rating_model.rate(lineup, opponent_profile)
-        weaknesses = find_weaknesses(lineup, opponent_profile)
-        swaps = swaps_by_weakness(lineup, opponent_profile, weaknesses, pool, opponent_ids, rating_model)
-        mgr = compute_manager_score(lineup, opponent_profile, pool, opponent_ids, rating_model)
-        validation = validate_lineup(lineup, opponent_ids)
-        sim = simulate_match(rating, lineup, opponent_profile, runs=500, seed=seed)
-
-        analysis = LineupAnalysis(
-            session_id="eval", formation=lineup.formation, rating=rating, weaknesses=weaknesses,
-            swaps_by_weakness=swaps, manager_score=mgr, validation=validation,
-            win_draw_loss=(sim.win_pct, sim.draw_pct, sim.loss_pct),
+        # Independent DeepEval re-check of the FINAL shown text (post regenerate/
+        # fallback) -- expected to always be 1.0, proving the fallback safety net
+        # holds even on the (rare) attempts narrate_*_report itself had to discard.
+        coach_case = LLMTestCase(
+            input=f"coach report vs {s.opponent_name}", actual_output=s.coach_result.text,
+            metadata={"allowed_values": list(s.coach_allowed_values)},
         )
+        match_case = LLMTestCase(
+            input=f"match report vs {s.opponent_name}", actual_output=s.match_result.text,
+            metadata={"allowed_values": list(s.match_allowed_values)},
+        )
+        deepeval_coach_scores.append(numeric_metric.measure(coach_case))
+        deepeval_match_scores.append(numeric_metric.measure(match_case))
 
-        coach_result = narrate_coach_report(analysis, opponent_name, provider)
-        match_result = narrate_match_report(sim, opponent_name, provider)
-
-        coach_passes += int(coach_result.passed)
-        match_passes += int(match_result.passed)
-        fallback_count += int(coach_result.used_fallback) + int(match_result.used_fallback)
-
-    n = len(sample_teams)
+    n = len(samples)
     return NumericEvalReport(
         n_samples=n,
-        coach_report_pass_rate=round(coach_passes / n, 3) if n else 0.0,
-        match_report_pass_rate=round(match_passes / n, 3) if n else 0.0,
+        coach_report_pass_rate=round(coach_passes / n, 3),
+        match_report_pass_rate=round(match_passes / n, 3),
         fallback_count=fallback_count,
+        deepeval_coach_score=round(sum(deepeval_coach_scores) / n, 3),
+        deepeval_match_score=round(sum(deepeval_match_scores) / n, 3),
     )
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from db.session import get_engine
+
+    async def _main() -> None:
+        session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+        async with session_factory() as session:
+            report = await run_numeric_eval(session)
+        print(report)
+
+    asyncio.run(_main())
