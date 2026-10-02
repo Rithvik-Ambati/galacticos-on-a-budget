@@ -123,6 +123,52 @@ against. It's a one-line swap at `build_graph`'s single call site; no node chang
 MemorySaver means sessions don't survive a process restart, which is fine for this
 build's own test suite (one process, one run) but not for a real deployment.
 
+## Frontend: plain CSS instead of Tailwind
+
+**What**: `frontend/src/theme.css` is hand-written CSS custom properties and a small
+set of reusable classes (`.card`, `.pill`, `.pitch`, `.player-row`, ...), not
+Tailwind, even though CLAUDE.md's stack line names Tailwind.
+
+**Why**: time budget. The design tokens (dark background, pitch green, gold, red --
+matching the Lineup Lab mockup built earlier in this project) and the component
+shapes were already fully decided; reaching for Tailwind's utility classes would
+have meant re-deriving the same values through a different syntax for no behavioural
+difference. If this becomes a real multi-contributor frontend, Tailwind's value is
+in enforcing consistency across people working in parallel -- worth adopting then,
+not clearly worth it for the single `theme.css` file this build has.
+
+## Chat "streaming" over a stub LLM provider
+
+**What**: `POST /sessions/{id}/chat` is a real SSE endpoint (`text/event-stream`,
+consumed by `frontend/src/api.ts::chatStream` via the Fetch streaming body reader) --
+but the chat node computes the *entire* answer up front (`graph/chat_tools.py::
+answer_question`) and the endpoint then emits it word-by-word with a small artificial
+delay between tokens.
+
+**Why**: DESIGN.md section 11 specifies SSE for this endpoint, and the transport is
+worth building for real even now -- the frontend code that consumes it (an
+`EventSource`-style reader assembling tokens into a growing message) is exactly what
+a real token-streaming LLM response needs on the client side, so swapping
+`StubProvider`/`AnthropicProvider.complete()` for a genuinely streaming call later is
+purely a backend change. What's faked here is specifically *where the tokens come
+from*, not the protocol between frontend and backend.
+
+## A browser playthrough is why `max_price_eur` and the race-condition fix exist
+
+**What**: `GET /players/search`'s `max_price_eur` parameter and `BuildXI.tsx`'s
+stale-search-result guard (see docs/PROGRESS.md Phase 6) both came from actually
+playing the game by hand in the browser, not from writing tests against the API in
+the abstract.
+
+**Why this is worth saying explicitly**: every other phase's bugs in this build were
+caught by automated tests. These two were not test-shaped problems -- the API
+behaved exactly as specified in isolation (a `max_price_eur`-less search correctly
+returns the top-N-by-ability players; two sequential searches each correctly return
+their own results). The bug only exists in the *experience* of a person running out
+of budget mid-build, or clicking two pitch slots in quick succession -- which is
+specifically the category of problem CLAUDE.md's "play 5 full matches yourself"
+instruction for Phase 6 exists to catch, and did.
+
 ## Formation-change counter moves use a greedy heuristic, not the ILP
 
 **What**: `engine/counter._greedy_lineup_for_formation` picks each slot's best

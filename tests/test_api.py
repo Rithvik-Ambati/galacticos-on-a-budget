@@ -1,0 +1,175 @@
+"""End-to-end API test. Implements the Phase 6 acceptance check: "make api + make web
+gives a fully playable game" -- this drives the API half of that through a complete
+session over real HTTP semantics (httpx's ASGI transport, no sockets needed).
+
+DATABASE_URL must be set before `api.main` (and anything importing `config.settings`)
+is first imported, since `get_settings`/`get_engine` are process-wide singletons --
+hence this happens at module import time, before the rest of the imports below.
+"""
+
+from __future__ import annotations
+
+import os
+import tempfile
+
+_TEST_DB_PATH = os.path.join(tempfile.mkdtemp(prefix="lineuplab_api_test_"), "test.db")
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
+os.environ["LLM_PROVIDER"] = "stub"
+
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker  # noqa: E402
+
+from api.main import app  # noqa: E402
+from db.session import get_engine  # noqa: E402
+from engine.optimizer import find_optimal_lineup  # noqa: E402
+from pipeline.features import compute_features  # noqa: E402
+from pipeline.ingest import run_ingest  # noqa: E402
+from pipeline.pricing import compute_prices  # noqa: E402
+from pipeline.team_profiles import compute_team_profiles  # noqa: E402
+from pipeline.to_engine import load_candidate_pool, load_squad_player_ids  # noqa: E402
+
+SEED = 42
+_seeded = False
+
+
+async def _ensure_seeded() -> None:
+    global _seeded
+    if _seeded:
+        return
+    engine = get_engine()
+    await run_ingest(engine, seed=SEED, output_dir=os.path.dirname(_TEST_DB_PATH))
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        await compute_features(session)
+    async with session_factory() as session:
+        await compute_prices(session, seed=SEED)
+    async with session_factory() as session:
+        await compute_team_profiles(session)
+    _seeded = True
+
+
+@pytest.fixture
+async def client():
+    await _ensure_seeded()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def _build_optimal_assignments(opponent_team_id: str) -> dict[str, str]:
+    session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+    async with session_factory() as session:
+        opp_ids = await load_squad_player_ids(session, opponent_team_id)
+        pool = await load_candidate_pool(session, exclude_ids=opp_ids, limit=400)
+    best = find_optimal_lineup("4-3-3", pool, opp_ids, time_limit_seconds=8.0)
+    assert best is not None
+    return {slot: c.player_id for slot, c in best.assignments.items()}
+
+
+async def test_health(client: httpx.AsyncClient) -> None:
+    r = await client.get("/health")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
+async def test_unknown_session_is_404(client: httpx.AsyncClient) -> None:
+    r = await client.get("/sessions/does-not-exist")
+    assert r.status_code == 404
+
+
+async def test_full_session_over_http(client: httpx.AsyncClient) -> None:
+    r = await client.post("/sessions", json={"mode": "wc"})
+    assert r.status_code == 200
+    session_id = r.json()["session_id"]
+
+    r = await client.post(f"/sessions/{session_id}/draw")
+    assert r.status_code == 200
+    opponent_team_id = r.json()["opponent_team_id"]
+    assert opponent_team_id.startswith("nt_")
+    assert r.json()["awaiting"] == "lineup"
+
+    r = await client.get(f"/sessions/{session_id}/scout")
+    assert r.status_code == 200
+    assert r.json()["opponent_team_id"] == opponent_team_id
+    assert len(r.json()["danger_players"]) > 0
+
+    r = await client.get(f"/sessions/{session_id}/players/search", params={"q": "a", "limit": 5})
+    assert r.status_code == 200
+    assert len(r.json()["results"]) <= 5
+    for result in r.json()["results"]:
+        assert "eligible" in result["eligibility"]
+
+    assignments = await _build_optimal_assignments(opponent_team_id)
+
+    r = await client.post(
+        f"/sessions/{session_id}/lineup/validate", json={"formation": "4-3-3", "assignments": assignments}
+    )
+    assert r.status_code == 200
+    assert r.json()["valid"]
+
+    r = await client.post(
+        f"/sessions/{session_id}/lineup/analyse", json={"formation": "4-3-3", "assignments": assignments}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert 0.0 <= body["analysis"]["rating"]["overall"] <= 100.0
+    assert body["coach_report_text"]
+    assert body["awaiting"] == "decision"
+
+    r = await client.post(f"/sessions/{session_id}/decision", json={"decision": "lock_in"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["simulation"] is not None
+    assert body["match_report_text"]
+    assert body["awaiting"] == "question"
+
+    async with client.stream(
+        "POST", f"/sessions/{session_id}/chat", json={"question": "what are the odds?"}
+    ) as resp:
+        assert resp.status_code == 200
+        chunks = [line async for line in resp.aiter_lines() if line]
+    assert any("done" in c for c in chunks)
+    assert any("%" in c for c in chunks)
+
+    r = await client.post(f"/sessions/{session_id}/chat/end")
+    assert r.status_code == 200
+
+    r = await client.get(f"/sessions/{session_id}")
+    assert r.status_code == 200
+    final = r.json()
+    assert final["opponent_team_id"] == opponent_team_id
+    assert len(final["messages"]) == 2
+
+
+async def test_invalid_lineup_returns_422(client: httpx.AsyncClient) -> None:
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    r = await client.post(f"/sessions/{session_id}/draw")
+    opponent_team_id = r.json()["opponent_team_id"]
+
+    session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+    async with session_factory() as session:
+        opp_ids = await load_squad_player_ids(session, opponent_team_id)
+        pool = await load_candidate_pool(session, exclude_ids=opp_ids, limit=400)
+    by_group: dict[str, list] = {}
+    for c in pool:
+        by_group.setdefault(c.position_group, []).append(c)
+    slots = {
+        "GK": "GK", "LB": "DF", "CB1": "DF", "CB2": "DF", "RB": "DF", "DM": "MF",
+        "LCM": "MF", "RCM": "MF", "LW": "FW", "ST": "FW", "RW": "FW",
+    }
+    too_expensive = {slot: max(by_group[grp], key=lambda c: c.price_eur).player_id for slot, grp in slots.items()}
+
+    r = await client.post(
+        f"/sessions/{session_id}/lineup/analyse", json={"formation": "4-3-3", "assignments": too_expensive}
+    )
+    assert r.status_code == 422
+
+
+async def test_simulate_before_lock_in_is_409(client: httpx.AsyncClient) -> None:
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    await client.post(f"/sessions/{session_id}/draw")
+    r = await client.post(f"/sessions/{session_id}/simulate")
+    assert r.status_code == 409

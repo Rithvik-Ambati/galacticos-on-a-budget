@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Player, PlayerFeatures, PlayerStatsSeason, Price, Squad
+from db.models import Club, NationalTeam, Player, PlayerFeatures, PlayerStatsSeason, Price, Squad
 from db.models import TeamProfile as TeamProfileRow
 from engine.schemas import DangerPlayer, PlayerCard
 from engine.schemas import TeamProfile as EngineTeamProfile
@@ -77,6 +77,16 @@ async def load_candidate_pool(
     if position_group:
         cards = [c for c in cards if c.position_group == position_group]
     return cards
+
+
+async def load_team_name(session: AsyncSession, team_id: str) -> str:
+    """Display name for a team_id (e.g. "nt_ENG" -> "ENG") -- narration should never
+    show the internal id to the user."""
+    if team_id.startswith("nt_"):
+        national = await session.get(NationalTeam, team_id)
+        return national.name if national else team_id
+    club = await session.get(Club, team_id)
+    return club.name if club else team_id
 
 
 async def load_squad_player_ids(session: AsyncSession, team_id: str) -> set[str]:

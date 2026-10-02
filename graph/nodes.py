@@ -32,6 +32,7 @@ from pipeline.to_engine import (
     load_player_card,
     load_squad_player_cards,
     load_squad_player_ids,
+    load_team_name,
     load_team_profile,
 )
 
@@ -141,7 +142,9 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
         from engine.schemas import LineupAnalysis
 
         analysis = LineupAnalysis.model_validate(state["analysis"])
-        text = narrate_coach_report(analysis, state["opponent_team_id"], provider)
+        async with session_factory() as session:
+            opponent_name = await load_team_name(session, state["opponent_team_id"])
+        text = narrate_coach_report(analysis, opponent_name, provider)
         return {"coach_report_text": text.text}
 
     async def user_decision(state: GameState) -> dict[str, Any]:
@@ -194,7 +197,9 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
         from engine.schemas import SimulationResult
 
         sim = SimulationResult.model_validate(state["simulation"])
-        text = narrate_match_report(sim, state["opponent_team_id"], provider)
+        async with session_factory() as session:
+            opponent_name = await load_team_name(session, state["opponent_team_id"])
+        text = narrate_match_report(sim, opponent_name, provider)
         return {"match_report_text": text.text}
 
     async def chat(state: GameState) -> dict[str, Any]:

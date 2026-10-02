@@ -165,7 +165,67 @@ over-budget lineup and confirms it bounces back to `build` rather than proceedin
 
 ## Phase 6 — API + frontend
 
-*(filled in once built)*
+Built: `api/main.py`, `api/routers.py`, `api/schemas.py`, `api/deps.py` (all 11
+endpoints from DESIGN.md section 11, including an SSE `/chat` that streams the
+narrated answer word-by-word -- see docs/DECISIONS.md on what "streamed" means with
+a stub LLM provider), and a full `frontend/` (React + Vite + TypeScript; plain CSS
+instead of Tailwind, see docs/DECISIONS.md) implementing all 8 screens from
+DESIGN.md section 2, wired to the real API.
+
+**Verified two ways**: `tests/test_api.py` drives a complete session over real HTTP
+semantics (httpx's ASGI transport) -- draw, scout, search, validate, analyse,
+lock-in, SSE chat, chat/end, final state -- plus a 422 case (over-budget lineup) and
+a 409 case (simulate before lock-in). Then, separately, a real browser session
+(`npm run dev` + `uvicorn api.main:app --reload`) played two complete matches
+end-to-end by hand: Welcome -> Draw -> Scouting -> Build XI (manually searching,
+filtering by affordability, and assigning all 11 players) -> Coach's Report (real
+weaknesses, real swap suggestions, real pitch highlighting) -> Match Day -> Match
+Report -> chat. Final score first match: 3-1 win vs England, manager score 98%.
+
+**Real bugs found and fixed while doing the manual browser playthrough** (this is
+exactly why CLAUDE.md asks for it, not just automated tests):
+1. A **frontend race condition**: clicking a pitch slot kicks off a new player
+   search, but the previous search's results stayed on screen until the new ones
+   arrived. Clicking fast enough landed a click on a stale row from the *previous*
+   slot's results, silently assigning the same player to two different slots (the
+   backend's own `duplicate_player` rule correctly blocked analysis, but the UI
+   should never have offered it). Fixed in `frontend/src/screens/BuildXI.tsx` two
+   ways: clear `results` the instant `activeSlot` changes, and make `pickPlayer`
+   itself refuse to let the same player occupy two slots, regardless of how it got
+   clicked.
+2. **A real product gap, not just a bug**: `load_candidate_pool`'s pool is ordered
+   by ability descending and capped at 400 -- the top of that list is almost always
+   unaffordable once the budget is half spent, and there was no way to search by
+   price. Added `max_price_eur` to `GET /players/search` and an "Affordable only"
+   toggle in the UI (defaulting on) that passes the player's own remaining budget
+   (plus whatever the slot being replaced already costs). Without this, a careful
+   player can paint themselves into a corner with no legal 11th pick.
+3. **Dev-workflow trap, not a code bug**: the `max_price_eur` fix above appeared to
+   not work at all on first browser test -- because the API server had been started
+   without `--reload`, so it was still running the pre-fix code. Confirmed via
+   `read_network_requests` that the request *did* carry the new parameter and the
+   server still ignored it, which pointed straight at stale server code rather than
+   a client bug. Restarting with `--reload` (as the `Makefile`'s `api` target already
+   specifies) fixed it immediately. Documented here because it's a trap this project
+   is especially exposed to: lots of small `api/` edits made directly against a
+   long-running manually-started server.
+4. Restarting that server for fix #3 above also demonstrated
+   docs/DECISIONS.md's MemorySaver caveat firsthand: the in-progress browser
+   session's graph state vanished (the DB row for the session still existed, so
+   `/sessions/{id}` didn't 404, but `/lineup/analyse` correctly reported "no opponent
+   yet" since the graph had no memory of the earlier `/draw` call). Not a bug --
+   exactly the documented behavior -- but worth recording that it was *hit*, not just
+   theorized, which is the strongest argument for prioritizing the Postgres
+   checkpointer before any real deployment.
+5. Coach/match report prose showed the raw internal id (`"vs nt_ENG"`) instead of a
+   readable name. Added `pipeline/to_engine.py::load_team_name` and used it at both
+   narration call sites in `graph/nodes.py`.
+
+Manual check done (desktop viewport in the browser pane): all 8 screens render
+correctly with real data; nationality/opponent-exclusion eligibility correctly
+varies per opponent (the same player who is "In opponent's squad" against Uruguay is
+freely eligible against France); budget, nationality counts and live pitch rendering
+all stay in sync with the backend on every pick.
 
 ## Phase 7 — Production
 
