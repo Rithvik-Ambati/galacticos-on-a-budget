@@ -229,4 +229,31 @@ all stay in sync with the backend on every pick.
 
 ## Phase 7 — Production
 
-Not attempted beyond CI config and eval scaffolding — no deployment, per instruction.
+Built: `evals/retrieval_eval.py` (Recall@10/MRR/nDCG, ablated across BM25/dense/
+hybrid/hybrid+rerank via the new `rag/retriever.py::retrieve_ablation`),
+`evals/numeric_eval.py` (validator pass rate — needs no golden set, since "correct"
+here is mechanically checkable against the engine's own numbers),
+`evals/run_all.py` (`make eval`; writes `evals/reports/baseline.json` and an
+`EvalRun` DB row), `.github/workflows/{ci,nightly-eval,weekly-pipeline}.yml`,
+production `Dockerfile` / `frontend/Dockerfile` / `docker-compose.prod.yml`, and the
+top-level `README.md` with real measured numbers (see the README itself, not
+reproduced here).
+
+**Explicitly not attempted, each for a specific documented reason** (not oversight):
+- Retrieval eval and RAGAS faithfulness both need a human-written golden set
+  (CLAUDE.md: "Golden eval sets in `evals/golden/` are written by the human. Do not
+  generate or edit expected answers.") — `evals/golden/{retrieval,chat}.jsonl` are
+  empty templates with a format README; the runners are tested against that empty
+  state, not against fabricated golden data.
+- Rating v2 needs real historical match results to train an xG-margin model against;
+  this build has no event-level data source (docs/DECISIONS.md already covers why).
+  Shipping a v2 trained only against this build's own Monte Carlo simulator's output
+  would be circular, not a real backtest, so it wasn't done.
+- No deployment: `docker-compose.prod.yml` and all three GitHub Actions workflows
+  are authored to the same stack docs/DESIGN.md names, but none have been run, per
+  the explicit "don't deploy it yet" instruction this phase was built under.
+
+Verified: `python -m evals.run_all` run for real against this build's seeded
+`dev.db` — 10/10 samples, 100% numeric-validator pass rate on both coach and match
+reports, 0 fallback triggers. `tests/test_evals.py` (3 tests) covers both runners
+mechanically, including the "no golden set / no embedder" degraded paths.

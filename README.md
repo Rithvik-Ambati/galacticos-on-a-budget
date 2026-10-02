@@ -1,0 +1,124 @@
+# Lineup Lab
+
+Build an XI to beat an assigned real-world opponent. Get coach-style feedback on
+weaknesses, rule-respecting swap suggestions, an overall rating, an opponent that
+fights back, and a simulated match.
+
+Full spec: [`docs/DESIGN.md`](docs/DESIGN.md). Build log, every bug found and fixed,
+and the reasoning behind every non-obvious choice: [`docs/PROGRESS.md`](docs/PROGRESS.md)
+and [`docs/DECISIONS.md`](docs/DECISIONS.md) — read those before this file if you want
+the real story; this one is the summary.
+
+**Core principle: the engine decides, the LLM explains.** Every number shown to the
+user is produced by deterministic, tested code or a validated model. The LLM only
+narrates engine output, answers follow-up questions using retrieved context, and
+translates questions into read-only SQL.
+
+## Architecture
+
+```
+React frontend (Vite + TS)
+      │
+FastAPI backend  ── Redis (cache)
+      │
+LangGraph orchestrator (game state, loops, interrupts, checkpointing)
+      │
+ ┌────┴──────────────┬──────────────────┐
+Analysis engine     Hybrid RAG          LLM
+(rules, rating,     (BM25 + vector,     (feedback, chat,
+ swaps, counter,     RRF, rerank)        text-to-SQL)
+ simulation)
+ └────────┬──────────┘
+   Postgres + pgvector  (stats, squads, prices, documents, vectors, sessions)
+          ▲
+   Weekly data pipeline (ingest → features → models → prices → documents → embeddings)
+
+Cross-cutting: Langfuse tracing · pytest · GitHub Actions eval gates · Docker
+```
+
+Repo layout mirrors this: `pipeline/` → `engine/` → `rag/` + `llm/` → `graph/` → `api/`
+→ `frontend/`, plus `db/` (models + migrations), `config/` (every tunable number),
+`evals/` and `tests/`. `CLAUDE.md` is the standing rulebook Claude Code read on every
+phase of this build — the single most load-bearing file in the repo if you want to
+understand *why* things are shaped the way they are.
+
+## How to run it
+
+**This sandbox could not reach a live Postgres** (Docker Desktop's engine wouldn't
+start — no WSL2/Hyper-V backend available; see `docs/DECISIONS.md`), so everything
+below is the path actually exercised in this build. The Postgres/Docker path is fully
+written (`docker-compose.yml`, the Alembic migration, `docker-compose.prod.yml`) but
+untested live.
+
+```bash
+# backend — uses SQLite by default (config/settings.py); no Docker needed
+pip install -e ".[dev,eval]"
+python -m pipeline.run_all        # seeds dev.db: synthetic players, prices, team
+                                   # profiles, embedded documents
+uvicorn api.main:app --reload --port 8000
+
+# frontend, in a second shell
+cd frontend
+npm install
+npm run dev                        # http://localhost:5173, proxies /api to :8000
+```
+
+With a real Postgres available: set `DATABASE_URL` in `.env` (see `.env.example`),
+`make up && make migrate` instead of letting SQLite auto-create tables, then the same
+`make pipeline && make api && make web`.
+
+Tests: `pytest` (69 passing — see below). Lint/typecheck: `ruff check . && mypy engine
+rag llm` (strict) `&& mypy pipeline graph db config api evals`. Frontend typecheck:
+`cd frontend && npx tsc --noEmit`.
+
+## Eval results
+
+Real numbers, measured against the synthetic dataset this build seeds (`python -m
+evals.run_all`, output in `evals/reports/baseline.json`):
+
+| Metric | Result | Target (DESIGN.md §12) |
+|---|---|---|
+| Coach-report numeric validator pass rate | **100%** (10/10 samples) | 100% after fallback |
+| Match-report numeric validator pass rate | **100%** (10/10 samples) | 100% after fallback |
+| Validator fallback triggers | **0** | report pre-fallback rate |
+| Pricing model MAE (held-out) | **~€11.0M**, 40.4% of mean price | documented |
+| Ability-score vs. ground-truth correlation | **0.84** overall (0.78–0.88 per position group) | — (sanity check) |
+| Budget sanity check | A full top-2%-ability XI does **not** fit under €500M; ~2 elite players afford alongside 8 median starters | "~3 elite + 8 good" |
+| Test suite | **69 passed**, 0 failed | — |
+| Retrieval eval (Recall@10 / MRR / nDCG) | **not run** — `evals/golden/retrieval.jsonl` is an empty template; CLAUDE.md requires a human to write it | Hybrid+rerank ≥ best single method |
+| Faithfulness (RAGAS) | **not run** — needs the same human-written golden chat set | ≥ 0.90 |
+| Rating v2 vs. v1 backtest | **not attempted** — needs real historical match results; this build has no event-level data source (see DECISIONS.md) | beats v1 baseline |
+
+The MAE and correlation numbers come from `pipeline.pricing`/`pipeline.features`
+running against the synthetic world in `pipeline/synthetic_source.py` — read
+`docs/DECISIONS.md` before citing them as anything other than "the pipeline code
+works and produces sane numbers on fake data."
+
+## Key design decisions (full detail in `docs/DECISIONS.md`)
+
+- **Synthetic Transfermarkt/Understat data**, not the real sources — two
+  deliberately-disagreeing record sets so `pipeline/id_resolution.py` does real
+  fuzzy-matching work instead of a no-op.
+- **SQLite fallback** behind the same `VectorType`/`DATABASE_URL` the Postgres path
+  uses, because there was no live Postgres to develop against.
+- **LangGraph + `MemorySaver`**, not the Postgres checkpointer — sessions don't
+  survive a server restart (hit for real during Phase 6's browser playthrough, not
+  just theorized).
+- **Rating v1 and its expected-goals formula** are explicit placeholders for Phase
+  7's never-attempted rating v2 (needs historical match data this build doesn't have).
+- **`StubProvider`** is a real, deterministic, fully-tested LLM provider (its
+  "narration" is the already-complete template, verbatim) — not a mock standing in
+  for untested code. Set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` for a real
+  model.
+- **Plain CSS, not Tailwind**, in the frontend — time budget; see DECISIONS.md.
+
+## What's not done
+
+- Real Transfermarkt/Understat ingestion (swap-in point: `pipeline/ingest.py`'s one
+  call to `pipeline.synthetic_source.generate()`).
+- The two human-written golden sets (`evals/golden/retrieval.jsonl`,
+  `evals/golden/chat.jsonl`) — the runners are built and tested against them being
+  empty; CLAUDE.md reserves actually writing them for a human.
+- Rating v2, and therefore the v1-vs-v2 backtest.
+- Anything in `docker-compose.prod.yml` or the GitHub Actions workflows has been
+  authored but never run — no deployment was done in this build, by instruction.

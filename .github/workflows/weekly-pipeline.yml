@@ -1,0 +1,26 @@
+name: Weekly data pipeline
+
+# docs/DESIGN.md section 14: "scheduled weekly pipeline job" -- refreshes player
+# stats, prices and documents against the production database. Authored, never run:
+# this needs real Transfermarkt/Understat ingestion (pipeline/synthetic_source.py is
+# a stand-in, see docs/DECISIONS.md) and a reachable production DATABASE_URL secret,
+# neither of which exist yet.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1" # Monday 04:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: python -m pipeline.run_all

@@ -1,0 +1,39 @@
+name: Nightly full eval
+
+# docs/DESIGN.md section 12: "Full eval runs nightly." Same job as ci.yml's eval
+# step, just on a schedule and against the full golden set (no PR-sized subsetting
+# here since there's no subsetting logic yet -- evals/run_all.py always runs
+# everything in evals/golden/).
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  nightly-eval:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite+aiosqlite:///./nightly.db"
+      LLM_PROVIDER: stub
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,eval]"
+
+      - name: Seed the eval database
+        run: python -m pipeline.run_all
+
+      - name: Run full eval suite
+        run: python -m evals.run_all
+
+      - name: Upload eval baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval-baseline
+          path: evals/reports/baseline.json

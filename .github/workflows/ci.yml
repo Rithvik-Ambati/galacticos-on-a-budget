@@ -1,0 +1,80 @@
+name: CI
+
+# docs/DESIGN.md section 12's CI gate: lint, typecheck, tests, eval subset with a
+# pinned model; fail on faithfulness/Recall@10/numeric-correctness thresholds.
+#
+# Runs against SQLite, not Postgres: docs/DECISIONS.md explains that this whole
+# project was built without a reachable Postgres (Docker Desktop's engine wouldn't
+# start in that sandbox), so the Postgres path in db/migrations/ has never been
+# exercised live, including here. Swapping this job's DATABASE_URL to a
+# `services: postgres:` block pointed at `pgvector/pgvector:pg16` plus a
+# `make migrate` step is the one thing to do before trusting this gate for the real
+# target database.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite+aiosqlite:///./ci.db"
+      LLM_PROVIDER: stub
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,eval]"
+
+      - name: Lint
+        run: ruff check . && ruff format --check .
+
+      - name: Typecheck (strict on engine/rag/llm)
+        run: mypy engine rag llm
+
+      - name: Typecheck (pipeline/graph/db/config/api/evals)
+        run: mypy pipeline graph db config api evals
+
+      - name: Unit + integration tests
+        run: pytest -q
+
+      - name: Seed the eval database
+        run: python -m pipeline.run_all
+
+      - name: Run eval subset (numeric correctness; retrieval if a golden set exists)
+        run: python -m evals.run_all
+
+      - name: Upload eval baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-baseline
+          path: evals/reports/baseline.json
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build

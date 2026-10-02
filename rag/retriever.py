@@ -101,6 +101,48 @@ def _default_rewrite(query: str) -> str:
     return query
 
 
+async def retrieve_ablation(
+    session: AsyncSession,
+    query: str,
+    method: str,
+    *,
+    embedder: Embedder | None = None,
+    reranker: Reranker | None = None,
+    doc_type: str | None = None,
+    top_k: int = TOP_K_FINAL,
+) -> list[str]:
+    """One named method's ranked doc_ids, for evals/retrieval_eval.py's ablation
+    across BM25 / dense / hybrid / hybrid+rerank (docs/DESIGN.md section 12).
+    `method`: "bm25" | "dense" | "hybrid" | "hybrid_rerank"."""
+    corpus = await _load_corpus(session, doc_type, None)
+    if not corpus:
+        return []
+    by_id = {d.doc_id: d for d in corpus}
+
+    bm25_index = Bm25Index.from_documents([(d.doc_id, d.text) for d in corpus])
+    bm25_ranked = [h.doc_id for h in bm25_index.search(query, TOP_K_PER_METHOD)]
+    if method == "bm25":
+        return bm25_ranked[:top_k]
+
+    dense_ranked: list[str] = []
+    if embedder is not None:
+        dense_ranked = [h.doc_id for h in await dense_search(session, embedder(query), TOP_K_PER_METHOD, doc_type)]
+    if method == "dense":
+        return dense_ranked[:top_k]
+
+    fused = [doc_id for doc_id, _score in rrf_fuse([lst for lst in (bm25_ranked, dense_ranked) if lst])]
+    if method == "hybrid":
+        return fused[:top_k]
+
+    if method == "hybrid_rerank":
+        if reranker is None or not fused:
+            return fused[:top_k]
+        reranked = reranker(query, [(doc_id, by_id[doc_id].text) for doc_id in fused[:TOP_K_PER_METHOD]])
+        return [doc_id for doc_id, _score in reranked[:top_k]]
+
+    raise ValueError(f"unknown method {method!r}")
+
+
 async def retrieve(
     session: AsyncSession,
     query: str,

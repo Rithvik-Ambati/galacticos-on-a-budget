@@ -1,0 +1,58 @@
+# Production composition. Authored per docs/DESIGN.md's architecture, never run in
+# this build (user instruction: "don't deploy yet") -- see Dockerfile and
+# frontend/Dockerfile for the two images this references, and
+# db/migrations/versions/0001_initial_schema.py for the schema `make migrate` applies
+# before the api service's first start.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: lineuplab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a real password}
+      POSTGRES_DB: lineuplab
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:2
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://lineuplab:${POSTGRES_PASSWORD}@postgres:5432/lineuplab
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set a real secret}
+      SALT: ${LANGFUSE_SALT:?set a real salt}
+      NEXTAUTH_URL: ${LANGFUSE_URL:?e.g. https://langfuse.example.com}
+    restart: unless-stopped
+
+  api:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DATABASE_URL: postgresql+asyncpg://lineuplab:${POSTGRES_PASSWORD}@postgres:5432/lineuplab
+      DATABASE_URL_READONLY: postgresql+asyncpg://lineuplab_ro:lineuplab_ro@postgres:5432/lineuplab
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: anthropic
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set a real key}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: ${LANGFUSE_URL}
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
