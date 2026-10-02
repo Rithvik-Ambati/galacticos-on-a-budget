@@ -54,6 +54,7 @@ def _coach_report_allowed_values(analysis: LineupAnalysis) -> set[float]:
         win, draw, loss, round(analysis.manager_score.manager_score * 100, 1),
         float(analysis.validation.budget_spent_eur), float(analysis.validation.budget_left_eur),
         float(len(analysis.validation.violations)),
+        100.0,  # the template's fixed "/100 overall" scale -- a literal, never an engine fact
     }
     for d in analysis.formation.split("-"):
         values.add(float(d))
@@ -62,6 +63,10 @@ def _coach_report_allowed_values(analysis: LineupAnalysis) -> set[float]:
         for v in w.evidence.values():
             values.add(float(v))
             values.add(round(float(v), 0))
+            # some weakness descriptions print an evidence fraction as a percentage
+            # (e.g. budget_misallocation's "{threat_share:.0%}") -- whitelist that
+            # form too, the same way severity already is above.
+            values.add(round(float(v) * 100, 0))
     for swaps in analysis.swaps_by_weakness.values():
         for s in swaps:
             values.update({s.rating_gain, float(s.price_delta_eur), float(abs(s.price_delta_eur))})

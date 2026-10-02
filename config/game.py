@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-BUDGET_EUR: int = 500_000_000
+BUDGET_EUR: int = 1_000_000_000
 NATIONALITY_LIMIT: int = 3
 SQUAD_SIZE: int = 11
 

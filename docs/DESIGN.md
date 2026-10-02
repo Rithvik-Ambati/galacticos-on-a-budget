@@ -13,7 +13,7 @@
 | Modes | World Cup (opponent = a national team's WC 2026 squad), Champions League (opponent = a club's UCL squad) |
 | Opponent | Assigned by a draw; the user does not choose |
 | Player pool | Every player in the database **except** the opponent's squad |
-| Budget | €500M, fixed for every match |
+| Budget | €1B, fixed for every match (raised from the original €500M — see docs/DECISIONS.md) |
 | Nationality limit | Max 3 players from the same country |
 | Lineup | 11 players in one supported formation (4-3-3, 4-4-2, 4-2-3-1, 3-5-2, 3-4-3, 5-3-2) |
 | Opponent counter | Opponent responds using only its real squad; max 3 counter rounds |
@@ -130,7 +130,7 @@ Position-specific weighted percentiles of recent per-90 stats (last 2 seasons, r
 1. Train XGBoost: `log(market_value) ~ ability, age, league, club_strength, position, minutes`.
 2. Predict each player's value with **age set to the population mean** and club strength neutralised → `ability_value`.
 3. `price = 0.7 × ability_value + 0.3 × market_value`, rounded to €1M, floor €1M.
-4. Budget sanity check: a €500M XI should afford ~3 elite players + 8 good players. Tune the curve if a full superstar XI fits.
+4. Budget sanity check: the budget (config/game.py's `BUDGET_EUR`) should afford ~3 elite players + 8 good players, not a full superstar XI. Tune the curve if a full superstar XI fits.
 
 Metrics: MAE on held-out market values; audit top-50 most expensive list by hand.
 

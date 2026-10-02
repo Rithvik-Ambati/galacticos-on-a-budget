@@ -85,7 +85,7 @@ evals.run_all`, output in `evals/reports/baseline.json`):
 | Validator fallback triggers | **0** | report pre-fallback rate |
 | Pricing model MAE (held-out) | **~€11.0M**, 40.4% of mean price | documented |
 | Ability-score vs. ground-truth correlation | **0.84** overall (0.78–0.88 per position group) | — (sanity check) |
-| Budget sanity check | A full top-2%-ability XI does **not** fit under €500M; ~2 elite players afford alongside 8 median starters | "~3 elite + 8 good" |
+| Budget sanity check | Budget raised to €1B (from €500M). A full top-2%-ability XI still does **not** fit; ~5 elite players now afford alongside 8 median starters (was ~2 at €500M) | "~3 elite + 8 good" (pre-raise target) |
 | Test suite | **69 passed**, 0 failed | — |
 | Retrieval eval (Recall@10 / MRR / nDCG) | **not run** — `evals/golden/retrieval.jsonl` is an empty template; CLAUDE.md requires a human to write it | Hybrid+rerank ≥ best single method |
 | Faithfulness (RAGAS) | **not run** — needs the same human-written golden chat set | ≥ 0.90 |

@@ -2,6 +2,38 @@
 
 Format: what, why, where it lives.
 
+## Budget raised from €500M to €1B
+
+**What**: `config/game.py::BUDGET_EUR` is now `1_000_000_000` (was `500_000_000`).
+Updated everywhere that number was duplicated: `frontend/src/screens/BuildXI.tsx`'s
+local fallback constant, `CLAUDE.md`'s one-line project summary, and
+`docs/DESIGN.md` section 1's rules table.
+
+**Why**: explicit user instruction.
+
+**Effect, measured not assumed**: re-ran `pipeline.pricing`'s budget sanity check
+against the synthetic world. At €500M, ~2 elite (top-2%-ability) players afforded
+alongside 8 median starters; at €1B, ~5 do. A full top-2%-ability XI still does
+**not** fit under €1B, so the budget still forces real trade-offs, just looser ones
+than DESIGN.md section 1's original "~3 elite + 8 good" target — worth knowing if
+a future session is asked to re-tune the pricing curve, since the curve itself
+wasn't touched, only the budget it's measured against.
+
+**A real bug this surfaced, unrelated to the budget itself**: doubling the budget
+changed which lineup `engine.optimizer.manager_score` considers "best possible,"
+which shifted a downstream narrated number (the manager-score percentage) just
+enough to stop coincidentally landing within the validator's tolerance of the
+literal `100` in "rates X/100 overall" — a number `llm/narrator.py`'s
+`_coach_report_allowed_values` never explicitly whitelisted. It had been passing by
+luck, not by correctness. Fixed by whitelisting `100.0` unconditionally (it's a
+fixed template literal, never an engine fact that could be hallucinated). While
+investigating, found a second, same-class pre-existing bug in the same function:
+weakness evidence values that get printed as percentages (e.g.
+`budget_misallocation`'s `{threat_share:.0%}`) were only ever whitelisted as their
+raw fraction, never their ×100 display form — fixed the same way severity already
+was. Both caught by `python -m pytest`, which is why "finish it" work always re-runs
+the full suite after any change to a shared constant, not just the code that
+constant obviously touches.
 ## Synthetic data instead of real Transfermarkt/Understat pulls
 
 **What**: `pipeline/synthetic_source.py` generates ~830 players, 10 UCL club squads,

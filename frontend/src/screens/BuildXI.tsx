@@ -4,7 +4,7 @@ import { FORMATION_SLOTS, Pitch } from "../components/Pitch";
 import type { PlayerCard, ValidationResult } from "../types";
 
 const FORMATIONS = Object.keys(FORMATION_SLOTS);
-const BUDGET_EUR = 500_000_000;
+const BUDGET_EUR = 1_000_000_000;
 
 interface Props {
   sessionId: string;
