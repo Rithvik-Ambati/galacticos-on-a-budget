@@ -636,7 +636,61 @@ this pass filled the remaining gaps against the spec and fixed what it found.
 numeric eval 1.0/1.0 (both pass rate and DeepEval score), faithfulness 1.0/1.0
 (stub-by-construction), retrieval skipped cleanly (golden set still has only its
 2 example rows -- filling it with real queries is on the project owner, per
-CLAUDE.md). `evals/reports/baseline.json` written. Smoke-tested
+CLAUDE.md). `evals/baselines/baseline.json` written. Smoke-tested
 `embedding_benchmark.py` directly against the real document corpus with a
 synthetic one-query golden set (not committed) to confirm the batched-encoding
 path actually ranks correctly end-to-end before relying on it.
+
+## Part 4 -- CI
+
+- **`.github/workflows/ci.yml`**: added an `e2e` job (new) that seeds a synthetic
+  SQLite DB, starts the FastAPI backend and the Vite dev server (not `vite
+  preview` -- `vite.config.ts`'s `/api` proxy is only defined under `server`, not
+  `preview`), waits on both with a plain `curl` retry loop (no new npm
+  dependency), and runs the full Playwright suite against them. The existing
+  `backend` job's eval step already fails the build on a numeric-validation drop
+  or a Recall@10 regression -- both are `evals/run_all.py`'s own exit code, not
+  separate CI logic. Fixed the artifact-upload path left over from Part 3's
+  `evals/reports/` -> `evals/baselines/` move. No job needs a secret: every job
+  sets `LLM_PROVIDER=stub` and `DATA_SOURCE=synthetic` explicitly.
+- **`.github/workflows/nightly-eval.yml`**: added the embedding-model benchmark
+  (not run on every PR, only nightly) and a faithfulness gate step
+  (`evals/check_faithfulness_gate.py`) that activates only once a human has
+  committed `evals/baselines/live_faithfulness_baseline.json` by running
+  `evals/faithfulness_eval.py` with `LLM_PROVIDER=anthropic` set (that script's
+  `__main__` block writes the file automatically whenever it runs live). With no
+  such file committed yet, the gate passes trivially and says so.
+- **Verification**: pushed to `main` and watched the run (`gh run watch`,
+  reported in the final summary) -- fixed whatever came back red, re-pushed,
+  confirmed all jobs green before moving to Part 5.
+
+### How to demonstrate a failing gate, on a throwaway branch
+
+None of these should be pushed to `main` -- make the change on a scratch branch,
+push it, watch the job go red in the Actions tab, then delete the branch.
+
+**Numeric-validation failure** -- force the validator to reject text it would
+normally accept, by tightening its tolerance in `llm/validator.py::_matches` to
+exact match:
+```python
+tolerance = 0.0  # was: max(0.5, abs(a) * 0.01)
+```
+`evals/numeric_eval.py`'s coach/match reports round some values for display
+(e.g. `{value:.1f}`), which the normal 1%-relative tolerance absorbs but an exact
+match won't -- `evals.run_all` reports `coach_report_pass_rate < 1.0` and exits 1.
+
+**Recall@10 regression** -- fill `evals/golden/retrieval_queries.jsonl` with a
+couple of real queries, run `make eval` once locally to get a real baseline
+committed, then edit the committed `evals/baselines/baseline.json` by hand and
+inflate the recorded `recall_at_10` for the current best method by more than
+0.02 above what the next run will actually produce. The next `python -m
+evals.run_all` (locally or in CI) prints `Recall@10 regression: ... -> ...` and
+exits 1.
+
+**Faithfulness gate** -- commit a throwaway
+`evals/baselines/live_faithfulness_baseline.json` with a score below 0.90:
+```json
+{"coach_faithfulness": 0.5, "match_faithfulness": 0.5, "n_samples": 1}
+```
+`python -m evals.check_faithfulness_gate` (and the nightly workflow) then prints
+`FAIL: faithfulness 0.5 is below the 0.9 gate.` and exits 1.

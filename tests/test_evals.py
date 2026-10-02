@@ -181,6 +181,32 @@ def test_embedding_benchmark_tables_render_without_models() -> None:
     assert "No embedding models" in render_latency_table(empty)
 
 
+def test_faithfulness_gate_passes_when_no_live_baseline_is_committed(tmp_path) -> None:
+    from evals.check_faithfulness_gate import check_gate
+
+    assert check_gate(path=str(tmp_path / "does_not_exist.json")) is True
+
+
+def test_faithfulness_gate_passes_above_threshold(tmp_path) -> None:
+    import json
+
+    from evals.check_faithfulness_gate import check_gate
+
+    path = tmp_path / "live_faithfulness_baseline.json"
+    path.write_text(json.dumps({"coach_faithfulness": 0.95, "match_faithfulness": 0.92}), encoding="utf-8")
+    assert check_gate(path=str(path)) is True
+
+
+def test_faithfulness_gate_fails_below_threshold(tmp_path) -> None:
+    import json
+
+    from evals.check_faithfulness_gate import check_gate
+
+    path = tmp_path / "live_faithfulness_baseline.json"
+    path.write_text(json.dumps({"coach_faithfulness": 0.95, "match_faithfulness": 0.80}), encoding="utf-8")
+    assert check_gate(path=str(path)) is False
+
+
 def test_load_previous_recall_returns_none_without_a_committed_baseline(tmp_path, monkeypatch) -> None:
     import evals.run_all as run_all
 

@@ -512,3 +512,16 @@ two aren't in conflict: the example rows are clearly labelled illustrations of
 the file format, not fabricated ground truth being passed off as real, and the
 `is_example` filter means they can never silently inflate a real evaluation
 run's numbers.
+
+## CI's E2E job runs `vite dev`, not a production build (Part 4)
+
+**What**: `.github/workflows/ci.yml`'s new `e2e` job starts the frontend with
+`npm run dev -- --host 127.0.0.1 --port 5173` (the Vite *dev* server), not
+`npm run build && npm run preview`.
+
+**Why**: `frontend/vite.config.ts`'s `/api` -> `http://127.0.0.1:8000` proxy is
+declared under vite's `server` config key, which only applies to `vite dev`;
+`vite preview` reads a separate `preview` key that this repo has never defined.
+Previewing a build would 404 every API call. Readiness is checked with a plain
+`curl` retry loop against `/health` and `/` rather than adding the `wait-on` npm
+package for one CI step.

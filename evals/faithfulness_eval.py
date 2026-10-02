@@ -26,6 +26,7 @@ other eval runner here follows for an empty golden set.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +37,8 @@ from llm.provider import AnthropicProvider, Provider, StubProvider, get_provider
 
 if TYPE_CHECKING:
     from ragas.llms import BaseRagasLLM
+
+LIVE_BASELINE_PATH = os.path.join(os.path.dirname(__file__), "baselines", "live_faithfulness_baseline.json")
 
 
 @dataclass
@@ -129,6 +132,7 @@ async def run_faithfulness_eval(
 
 if __name__ == "__main__":
     import asyncio
+    import json
 
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -138,6 +142,30 @@ if __name__ == "__main__":
         session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)
         async with session_factory() as session:
             report = await run_faithfulness_eval(session)
-        print(report if report is not None else "No samples (empty DB) -- skipping.")
+
+        if report is None:
+            print("No samples (empty DB) -- skipping.")
+            return
+
+        print(report)
+        if report.judge == "ragas+anthropic":
+            # Nightly CI has no secret to call a live LLM with, so its faithfulness
+            # gate (.github/workflows/nightly-eval.yml) checks this committed,
+            # human-produced record instead of running RAGAS itself -- "activates
+            # only when a live-run baseline exists" (docs/PROGRESS.md Part 4).
+            # Commit this file deliberately (it's git-tracked, unlike evals/reports/)
+            # once you're satisfied with the score it records.
+            os.makedirs(os.path.dirname(LIVE_BASELINE_PATH), exist_ok=True)
+            with open(LIVE_BASELINE_PATH, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "coach_faithfulness": report.coach_faithfulness,
+                        "match_faithfulness": report.match_faithfulness,
+                        "n_samples": report.n_samples,
+                    },
+                    f,
+                    indent=2,
+                )
+            print(f"Live faithfulness baseline written to {LIVE_BASELINE_PATH} -- commit it by hand if you want it.")
 
     asyncio.run(_main())

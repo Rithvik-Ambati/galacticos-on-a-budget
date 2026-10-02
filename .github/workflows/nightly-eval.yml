@@ -1,9 +1,17 @@
 name: Nightly full eval
 
-# docs/DESIGN.md section 12: "Full eval runs nightly." Same job as ci.yml's eval
-# step, just on a schedule and against the full golden set (no PR-sized subsetting
-# here since there's no subsetting logic yet -- evals/run_all.py always runs
-# everything in evals/golden/).
+# docs/DESIGN.md section 12: "Full eval runs nightly." Same eval subset as ci.yml,
+# plus the embedding-model benchmark (evals/embedding_benchmark.py -- not run on
+# every PR since it downloads and encodes with 3 separate models).
+#
+# Faithfulness gate: nightly has no secret to call a live LLM with (same "no job
+# here needs a secret" rule as ci.yml), so it can't compute a fresh live
+# faithfulness score. evals/check_faithfulness_gate.py instead checks the STATIC,
+# human-committed record at evals/baselines/live_faithfulness_baseline.json --
+# written by running `python -m evals.faithfulness_eval` by hand with
+# LLM_PROVIDER=anthropic set. The gate "activates only when a live-run baseline
+# exists": if that file was never committed, the check passes trivially. See
+# docs/PROGRESS.md Part 4 for how to exercise a failing gate on a throwaway branch.
 
 on:
   schedule:
@@ -30,11 +38,18 @@ jobs:
       - name: Seed the eval database
         run: python -m pipeline.run_all
 
-      - name: Run full eval suite
+      - name: Run full eval suite (numeric, retrieval, faithfulness)
         run: python -m evals.run_all
 
-      - name: Upload eval baseline
+      - name: Run embedding-model benchmark
+        run: python -m evals.embedding_benchmark
+
+      - name: Faithfulness gate (checks a committed live-run baseline, if any)
+        run: python -m evals.check_faithfulness_gate
+
+      - name: Upload eval baseline (this run's numbers, not the committed one)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nightly-eval-baseline
-          path: evals/reports/baseline.json
+          path: evals/baselines/baseline.json
