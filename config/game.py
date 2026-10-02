@@ -187,3 +187,22 @@ EXTRA_TIME_STAMINA_FACTOR: float = 0.9
 PENALTY_LEAGUE_AVERAGE_CONVERSION: float = 0.76
 HOME_ADVANTAGE_LAMBDA_MULTIPLIER: float = 1.08
 AWAY_DISADVANTAGE_LAMBDA_MULTIPLIER: float = 0.95
+
+# engine.simulation.expected_goals coefficients. docs/DECISIONS.md "Rating/simulation
+# rebalance" explains the diagnosis: opponent danger-player ability (opp_attack_proxy)
+# sits near the top of the same 0-100 scale as a genuinely elite user lineup, so the
+# opponent's own quality dominated lam_opp almost regardless of the user's own
+# defence/matchup -- a 92+ rated lineup capped out around ~53% win vs a strong
+# opponent. DEFENCE/MATCHUP_SUPPRESSION_WEIGHT were raised (0.6->1.0, 0.3->0.6) so a
+# lineup that is genuinely strong *against this specific opponent* visibly suppresses
+# their expected goals; OPP_ATTACK_PROXY_WEIGHT is deliberately left unchanged so a
+# strong opponent's own inherent quality still matters (an elite real team should stay
+# dangerous) -- only the user's own counter-quality was underweighted, not the
+# opponent's.
+EXPECTED_GOALS_BASELINE: float = 0.25
+EXPECTED_GOALS_ATTACK_WEIGHT: float = 1.6
+EXPECTED_GOALS_USER_MATCHUP_WEIGHT: float = 0.6
+EXPECTED_GOALS_OPP_ATTACK_PROXY_WEIGHT: float = 1.6
+EXPECTED_GOALS_OPP_ATTACK_PROXY_DEFAULT: float = 72.0
+EXPECTED_GOALS_DEFENCE_SUPPRESSION_WEIGHT: float = 1.0  # was 0.6
+EXPECTED_GOALS_OPP_MATCHUP_SUPPRESSION_WEIGHT: float = 0.6  # was 0.3

@@ -2,6 +2,52 @@
 
 Format: what, why, where it lives.
 
+## Rating/simulation rebalance (Phase 6c, Step 0)
+
+**What**: `engine/simulation.py::expected_goals`'s coefficients — now named constants
+in `config/game.py` (`EXPECTED_GOALS_*`) instead of inline magic numbers, per
+CLAUDE.md's "no magic numbers in engine logic" rule, since this was the moment they
+needed tuning anyway. `EXPECTED_GOALS_DEFENCE_SUPPRESSION_WEIGHT` raised 0.6 -> 1.0
+and `EXPECTED_GOALS_OPP_MATCHUP_SUPPRESSION_WEIGHT` raised 0.3 -> 0.6.
+`EXPECTED_GOALS_OPP_ATTACK_PROXY_WEIGHT` (1.6) deliberately left unchanged.
+
+**Why**: user-reported symptom — a 95.1-rated lineup only won 54.2% vs a real
+opponent. Measured, not assumed: ran 54 varied lineups (3 spend levels x 3 real
+opponents of deliberately different strength) through rating + simulation. Found two
+compounding causes: (1) ratings compress into an 87-92 band for *any* genuinely good
+lineup, since sub-ratings are position-relative ability *percentiles* and there's
+only so much percentile room above "already selecting the best available players";
+(2) `opp_attack_proxy` (the opponent's own danger-player ability, itself often 85-95
+for a real elite team) was weighted 1.6 in `lam_opp`, while the user's own
+defence/matchup suppression of that same term was only weighted 0.6/0.3 — so even a
+maxed-out defence barely dented a strong opponent's expected goals. The single
+highest-rated sampled lineup against the strongest test opponent (92.5 overall,
+defence 90.9, matchup 95.3) still only won 53.3%.
+
+**Fix chosen over the alternative**: raising the suppression weights (scoped to
+`expected_goals` alone) rather than reworking the rating formula itself, which
+`engine/weaknesses.py`, `engine/swaps.py`, `engine/optimizer.py::manager_score`, and
+every narrator template depend on — much larger blast radius for the same underlying
+problem. Rating compression (cause 1) was deliberately left alone as a secondary,
+lower-risk finding, not fixed in this change.
+
+**Measured effect (same 54 lineups, before vs after)**: median win% vs the weakest
+opponent 63.5% -> 71.2%; vs the mid opponent 53.0% -> 59.9%; vs the strongest
+opponent 49.7% -> 56.6%. The concrete problem is gone — every sampled lineup now
+wins more than it loses against all three opponents, where several previously had a
+losing record (<50% win) against the strongest one. The shift is a fairly uniform
++7 points across all three opponent strengths rather than a sharper
+stronger-for-weak-opponents/milder-for-strong-opponents curve — a conservative first
+pass, not refuted as insufficient, but flagged in case a sharper "a high rating
+should feel dominant" effect is wanted later (the same named constants are the next
+turn to reach for, no code structure change needed).
+
+**Tests**: `tests/test_simulation.py` — a hand-computed regression pin for
+`expected_goals` at these coefficients, two monotonicity properties (higher
+defence/matchup strictly suppresses the opponent's lambda), a regression lock on the
+exact diagnosed scenario (lam_user/lam_opp ratio now > 1.8, was ~1.48), and a
+clamping check at the extremes.
+
 ## Budget raised from €500M to €1B
 
 **What**: `config/game.py::BUDGET_EUR` is now `1_000_000_000` (was `500_000_000`).

@@ -14,6 +14,13 @@ import numpy as np
 
 from config.game import (
     AWAY_DISADVANTAGE_LAMBDA_MULTIPLIER,
+    EXPECTED_GOALS_ATTACK_WEIGHT,
+    EXPECTED_GOALS_BASELINE,
+    EXPECTED_GOALS_DEFENCE_SUPPRESSION_WEIGHT,
+    EXPECTED_GOALS_OPP_ATTACK_PROXY_DEFAULT,
+    EXPECTED_GOALS_OPP_ATTACK_PROXY_WEIGHT,
+    EXPECTED_GOALS_OPP_MATCHUP_SUPPRESSION_WEIGHT,
+    EXPECTED_GOALS_USER_MATCHUP_WEIGHT,
     EXTRA_TIME_FRACTION,
     EXTRA_TIME_STAMINA_FACTOR,
     HOME_ADVANTAGE_LAMBDA_MULTIPLIER,
@@ -37,15 +44,19 @@ def expected_goals(rating: RatingResult, opponent: TeamProfile) -> tuple[float, 
     opp_attack_proxy = (
         statistics.mean(dp.ability_score for dp in opponent.danger_players)
         if opponent.danger_players
-        else 72.0
+        else EXPECTED_GOALS_OPP_ATTACK_PROXY_DEFAULT
     )
 
-    lam_user = 0.25 + (attack / 100.0) * 1.6 + (matchup - 50.0) / 100.0 * 0.6
+    lam_user = (
+        EXPECTED_GOALS_BASELINE
+        + (attack / 100.0) * EXPECTED_GOALS_ATTACK_WEIGHT
+        + (matchup - 50.0) / 100.0 * EXPECTED_GOALS_USER_MATCHUP_WEIGHT
+    )
     lam_opp = (
-        0.25
-        + (opp_attack_proxy / 100.0) * 1.6
-        - (defence - 50.0) / 100.0 * 0.6
-        - (matchup - 50.0) / 100.0 * 0.3
+        EXPECTED_GOALS_BASELINE
+        + (opp_attack_proxy / 100.0) * EXPECTED_GOALS_OPP_ATTACK_PROXY_WEIGHT
+        - (defence - 50.0) / 100.0 * EXPECTED_GOALS_DEFENCE_SUPPRESSION_WEIGHT
+        - (matchup - 50.0) / 100.0 * EXPECTED_GOALS_OPP_MATCHUP_SUPPRESSION_WEIGHT
     )
     return (
         max(LAMBDA_MIN, min(LAMBDA_MAX, lam_user)),
