@@ -48,6 +48,56 @@ defence/matchup strictly suppresses the opponent's lambda), a regression lock on
 exact diagnosed scenario (lam_user/lam_opp ratio now > 1.8, was ~1.48), and a
 clamping check at the extremes.
 
+## Rating/simulation rebalance, pass 2
+
+**What**: further raised `EXPECTED_GOALS_ATTACK_WEIGHT` 1.6 -> 2.0 and
+`EXPECTED_GOALS_USER_MATCHUP_WEIGHT` 0.6 -> 1.0 (pass 1's values). Opponent
+suppression weights (from pass 1) left untouched.
+
+**Why**: pass 1 was validated against the Step 0 54-lineup sample, which turned out
+to only span a narrow ~5-rating-point band (all budget-varied, near-top-ability
+picks) — useless for testing "does a dominant lineup feel dominant." Measured
+against the TRUE optimal lineup (`engine.optimizer.find_optimal_lineup`, not a
+heuristic) and a deliberately worst-case lineup per opponent: the optimal lineup
+only reached 66.6% win vs a weak opponent and 53.1% vs a strong one, short of
+user-set targets (75-85% / 55-65%). Pass 2's change is scoped to the attack side of
+`lam_user` only (not opponent suppression), so it wouldn't re-risk the
+weakest-vs-strongest gap and monotonicity properties, which were confirmed healthy
+(20+ point gaps, r>0.99 rating-win correlation) once tested against this wider,
+worst-to-optimal range rather than the narrow Step 0 sample.
+
+**Measured effect (real optimal/worst lineups, live coefficients)**: optimal vs
+Iran (weak) 66.6% -> 76.3% (target 75-85%, met); optimal vs Türkiye (strong)
+53.1% -> 63.3% (target 55-65%, met, close to the upper bound). Draw% stayed in a
+sane 16.8-24.9% range throughout.
+
+**Coherence check, requested alongside this change**: re-ran the 54-lineup
+comparison with common random numbers (same seed for every lineup, not a fresh one
+each time) at 50,000 runs. Non-monotonic rating-vs-win% steps did **not**
+disappear (5-7 out of 17 per opponent, same order of magnitude as before) — so it
+isn't Monte Carlo noise. Root cause, confirmed: `expected_goals()` only reads
+`attack`/`defence`/`matchup` from `RatingResult.sub_ratings`; `RATING_WEIGHTS`
+gives those three a combined 64% of overall rating, leaving `midfield_control`
+(18%), `cohesion` (10%) and `balance` (8%) — 36% of the displayed number — with
+zero influence on simulated win%. Two lineups can share an overall rating through
+different mixes of these six components while only the attack/defence/matchup mix
+actually drives the match outcome.
+
+**Practical impact, tested rather than assumed**: ran the real swap optimizer
+(`engine/swaps.py`, which ranks candidates by overall-rating gain) on 20 realistic
+lineups and compared simulated win% before/after each top-ranked suggested swap
+(common random numbers per pair). **0/20** cases raised rating while lowering
+win% — every suggested swap improved both. Read: swap candidates are ranked among
+same-position options sorted by ability, and ability_score drives
+attack/defence/matchup and midfield_control/cohesion/balance correlatively, so a
+genuinely-better individual player tends to lift the win%-relevant components too,
+even though the overall-rating ranking doesn't privilege them. Per the
+user-specified threshold (propose a rating-architecture rework only if more than
+1/20 swaps showed the rating-up/win%-down pattern), **no rework was proposed** —
+the structural gap is real and now documented, but it isn't causing bad swap
+advice in practice. Worth revisiting if a future, less ability-correlated swap
+pool (e.g. role-fit-only re-ranking) ever makes the gap practically visible.
+
 ## Budget raised from €500M to €1B
 
 **What**: `config/game.py::BUDGET_EUR` is now `1_000_000_000` (was `500_000_000`).

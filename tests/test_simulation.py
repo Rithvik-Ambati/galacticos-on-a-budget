@@ -4,7 +4,8 @@ import time
 
 from engine.demo_fixtures import BRAZIL_OPPONENT_LINEUP, BRAZIL_PROFILE, build_demo_lineup
 from engine.rating import get_default_rating_model
-from engine.schemas import DangerPlayer, RatingResult, SubRatings, TeamProfile
+from engine.rules import get_slots
+from engine.schemas import DangerPlayer, Lineup, PlayerCard, RatingResult, SubRatings, TeamProfile
 from engine.simulation import LAMBDA_MAX, LAMBDA_MIN, expected_goals, simulate_match, simulate_two_legs
 
 RATING_MODEL = get_default_rating_model()
@@ -26,13 +27,27 @@ def _opponent(danger_ability: float) -> TeamProfile:
     )
 
 
+def _uniform_lineup(ability: float) -> Lineup:
+    """A legal 4-3-3 where every player has the same ability_score -- a flat-quality
+    stand-in for "worst"/"optimal" lineups, cheap enough to build without a DB."""
+    assignments = {
+        slot.slot_id: PlayerCard(
+            player_id=slot.slot_id, name=slot.slot_id, nationality=f"NAT{i}", position_group=slot.position_group,
+            position_code=slot.position_code, ability_score=ability, price_eur=1_000_000,
+        )
+        for i, slot in enumerate(get_slots("4-3-3"))
+    }
+    return Lineup(formation="4-3-3", assignments=assignments)
+
+
 def test_expected_goals_matches_hand_computed_value() -> None:
-    # Regression pin for the Phase 6c rebalance (docs/DECISIONS.md): defence/matchup
-    # suppression weights raised from 0.6/0.3 to 1.0/0.6 so a lineup that's genuinely
-    # strong against a specific opponent visibly suppresses that opponent's own goals,
-    # which wasn't true before (a 92+ rating vs a strong opponent capped near 53% win).
+    # Regression pin for the Phase 6c rebalance (docs/DECISIONS.md "Rating/simulation
+    # rebalance, pass 2"): attack/user-matchup weights raised 1.6/0.6 -> 2.0/1.0 so the
+    # TRUE optimal lineup (not a heuristic) reaches the 75-85%/55-65% win% targets vs
+    # weak/strong opponents, which pass 1's defence/matchup suppression alone didn't
+    # reach (optimal lineup topped out at 66.6%/53.1%).
     lam_user, lam_opp = expected_goals(_rating(attack=90.0, defence=90.0, matchup=95.0), _opponent(92.0))
-    assert round(lam_user, 4) == round(0.25 + 0.90 * 1.6 + (95.0 - 50.0) / 100.0 * 0.6, 4)
+    assert round(lam_user, 4) == round(0.25 + 0.90 * 2.0 + (95.0 - 50.0) / 100.0 * 1.0, 4)
     assert round(lam_opp, 4) == round(0.25 + 0.92 * 1.6 - (90.0 - 50.0) / 100.0 * 1.0 - (95.0 - 50.0) / 100.0 * 0.6, 4)
 
 
@@ -49,13 +64,25 @@ def test_higher_matchup_suppresses_opponent_and_boosts_user() -> None:
     assert lam_user_high > lam_user_low
 
 
-def test_dominant_lineup_beats_strong_opponent_more_clearly_than_before() -> None:
-    """The exact scenario Step 0's diagnosis measured: a near-maximal lineup (defence
-    and matchup both ~90+) facing an opponent whose own danger players are comparably
-    elite. Before the rebalance this produced lam_user/lam_opp ~= 1.48 (~53% win);
-    the rebalanced weights should pull that ratio up meaningfully."""
-    lam_user, lam_opp = expected_goals(_rating(attack=92.2, defence=90.9, matchup=95.3), _opponent(92.4))
-    assert lam_user / lam_opp > 1.8
+def test_optimal_lineup_beats_worst_lineup_against_every_opponent_strength() -> None:
+    """Property, not a hardcoded coefficient-specific number (so future tuning can't
+    silently break it): a flat-95-ability lineup must out-win a flat-40-ability
+    lineup against opponents of every strength, and its win% must fall as the
+    opponent gets stronger -- the real-data finding this phase's coefficient changes
+    were tuned against (docs/DECISIONS.md "Rating/simulation rebalance, pass 2")."""
+    worst, optimal = _uniform_lineup(40.0), _uniform_lineup(95.0)
+    opponents = [_opponent(55.0), _opponent(80.0), _opponent(95.0)]  # weak -> mid -> strong
+
+    optimal_wins = []
+    for opponent in opponents:
+        worst_rating = RATING_MODEL.rate(worst, opponent)
+        optimal_rating = RATING_MODEL.rate(optimal, opponent)
+        worst_sim = simulate_match(worst_rating, worst, opponent, runs=4000, seed=1)
+        optimal_sim = simulate_match(optimal_rating, optimal, opponent, runs=4000, seed=1)
+        assert optimal_sim.win_pct > worst_sim.win_pct, (opponent.danger_players[0].ability_score, worst_sim.win_pct, optimal_sim.win_pct)
+        optimal_wins.append(optimal_sim.win_pct)
+
+    assert optimal_wins == sorted(optimal_wins, reverse=True), optimal_wins
 
 
 def test_expected_goals_always_clamped() -> None:

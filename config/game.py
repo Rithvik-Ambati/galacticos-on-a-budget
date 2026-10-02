@@ -226,9 +226,18 @@ AWAY_DISADVANTAGE_LAMBDA_MULTIPLIER: float = 0.95
 # strong opponent's own inherent quality still matters (an elite real team should stay
 # dangerous) -- only the user's own counter-quality was underweighted, not the
 # opponent's.
+#
+# Second pass (docs/DECISIONS.md "Rating/simulation rebalance, pass 2"): even after
+# the above, the TRUE optimal lineup (engine.optimizer's real ILP solution, not a
+# heuristic) only reached 66.6% win vs a weak opponent and 53.1% vs a strong one --
+# short of the 75-85%/55-65% targets. ATTACK_WEIGHT and USER_MATCHUP_WEIGHT raised
+# again (1.6->2.0, 0.6->1.0) -- the attack side of lam_user only, not opponent
+# suppression, so the now-healthy weakest-vs-strongest gap and monotonicity
+# properties (verified against real worst/optimal lineups, not just budget-varied
+# near-elite ones) aren't put at risk.
 EXPECTED_GOALS_BASELINE: float = 0.25
-EXPECTED_GOALS_ATTACK_WEIGHT: float = 1.6
-EXPECTED_GOALS_USER_MATCHUP_WEIGHT: float = 0.6
+EXPECTED_GOALS_ATTACK_WEIGHT: float = 2.0  # was 1.6, then 1.6 again after pass 1
+EXPECTED_GOALS_USER_MATCHUP_WEIGHT: float = 1.0  # was 0.6
 EXPECTED_GOALS_OPP_ATTACK_PROXY_WEIGHT: float = 1.6
 EXPECTED_GOALS_OPP_ATTACK_PROXY_DEFAULT: float = 72.0
 EXPECTED_GOALS_DEFENCE_SUPPRESSION_WEIGHT: float = 1.0  # was 0.6
