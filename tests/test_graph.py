@@ -86,6 +86,35 @@ async def test_full_session_build_lock_in_chat_end(ready_engine) -> None:
     assert graph.get_state(config).next == ()
 
 
+async def test_full_session_runs_with_tracing_configured(ready_engine, monkeypatch) -> None:
+    """docs/DESIGN.md section 14 / Part 5: with a configured Langfuse client (faked
+    here -- no real server/keys in this environment), the same full session must
+    still run correctly end to end, and every node span recorded must carry this
+    session's session_id (observability.py's traced_node)."""
+    import observability
+    from tests.test_observability import _FakeClient
+
+    fake = _FakeClient()
+    monkeypatch.setattr(observability, "_client", lambda: fake)
+
+    graph = build_graph(ready_engine, seed=SEED)
+    config = {"configurable": {"thread_id": "it-tracing"}}
+
+    state = await graph.ainvoke({"mode": "wc", "session_id": "it-tracing"}, config)
+    assignments = await _optimal_assignments(ready_engine, state["opponent_team_id"])
+    state = await graph.ainvoke(Command(resume={"formation": "4-3-3", "assignments": assignments}), config)
+    assert state.get("analysis") is not None
+    state = await graph.ainvoke(Command(resume={"decision": "lock_in"}), config)
+    assert state.get("simulation") is not None
+
+    all_pairs = zip(fake.calls, fake.spans, strict=True)
+    node_calls = [(call, span) for call, span in all_pairs if call["name"].startswith("node.")]
+    node_names = {call["name"] for call, _span in node_calls}
+    assert {"node.draw", "node.analyse", "node.simulate"} <= node_names
+    for call, span in node_calls:
+        assert {"session_id": "it-tracing"} in span.updates, f"{call['name']} missing session_id"
+
+
 async def test_counter_round_cap_through_graph(ready_engine) -> None:
     graph = build_graph(ready_engine, seed=SEED)
     config = {"configurable": {"thread_id": "it-2"}}

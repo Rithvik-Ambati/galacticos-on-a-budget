@@ -525,3 +525,37 @@ declared under vite's `server` config key, which only applies to `vite dev`;
 Previewing a build would 404 every API call. Readiness is checked with a plain
 `curl` retry loop against `/health` and `/` rather than adding the `wait-on` npm
 package for one CI step.
+
+## observability.py is a standalone module, not inside engine/llm/rag (Part 5)
+
+**What**: all Langfuse tracing lives in one new top-level `observability.py`,
+imported by `graph/nodes.py` (which wraps `engine/` calls), `llm/narrator.py`,
+`rag/retriever.py`, `rag/rerank.py`, and `llm/sql_tool.py`.
+
+**Why**: CLAUDE.md's module boundaries say `engine/` must never import `llm/`,
+`api/`, or `db/`. `graph/nodes.py` is the layer that calls both `engine/`
+functions (`build_analysis`, `run_counter_round`, `simulate_match`) and needs
+tracing on them -- if the tracing helper lived inside `llm/`, importing it from
+`graph/nodes.py` would be fine (graph/ isn't engine/), but conceptually it
+would make `llm/` a dependency of "the thing that traces engine calls," which
+reads backwards. A dependency-free leaf module (the same role `config/`
+already plays) avoids the question entirely.
+
+## Node-level tracing skips `build`/`user_decision`, traces `chat` only after its interrupt
+
+**What**: `graph/nodes.py`'s `@traced_node` decorator is applied to `draw`,
+`validate`, `analyse`, `narrate_report`, `opponent_counter`, `simulate`, and
+`narrate_match`, but not to `build` or `user_decision`, and `chat` gets a
+manual `traced_span` around only the post-`interrupt()` half of its body.
+
+**Why**: LangGraph's `interrupt()` pauses a node by raising a control-flow
+signal that unwinds back through the node function; on resume, the **entire
+node function re-executes from the top**, with `interrupt()` now returning the
+resume payload instead of raising. `build` and `user_decision` call
+`interrupt()` as their literal first statement and do no other work -- wrapping
+either in a span would record one span that looks "complete" when the graph
+actually just paused, then a second, genuinely complete span on resume: two
+trace entries for one logical pause/resume, with the first a misleading
+false-error-looking artifact. `chat` does real work (`answer_question`) *after*
+`interrupt()` returns, so only that portion -- which only ever runs once per
+resume, never during the pausing call -- gets a span.

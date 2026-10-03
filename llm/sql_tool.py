@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from observability import traced_span
+
 ALLOWED_TABLES = {
     "players", "player_features", "player_stats_season", "prices", "squads",
     "clubs", "national_teams", "team_profiles",
@@ -79,6 +81,16 @@ class SqlToolResult:
 
 async def execute_guarded_sql(
     session: AsyncSession, sql: str, *, timeout_seconds: float = STATEMENT_TIMEOUT_SECONDS
+) -> SqlToolResult:
+    with traced_span("llm.sql_tool", as_type="tool", input=sql) as span:
+        result = await _execute_guarded_sql_impl(session, sql, timeout_seconds=timeout_seconds)
+        if span is not None:
+            span.update(output={"ok": result.ok, "n_rows": len(result.rows), "reason": result.reason})
+        return result
+
+
+async def _execute_guarded_sql_impl(
+    session: AsyncSession, sql: str, *, timeout_seconds: float
 ) -> SqlToolResult:
     guard = guard_sql(sql)
     if not guard.ok or guard.sql is None:

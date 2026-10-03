@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from evals._report_samples import generate_report_samples
 from llm.provider import Provider
 from llm.validator import validate_numbers
+from observability import attach_score
 
 
 class NumericFaithfulnessMetric(BaseMetric):  # type: ignore[no-untyped-call]
@@ -93,8 +94,15 @@ async def run_numeric_eval(
             input=f"match report vs {s.opponent_name}", actual_output=s.match_result.text,
             metadata={"allowed_values": list(s.match_allowed_values)},
         )
-        deepeval_coach_scores.append(numeric_metric.measure(coach_case))
-        deepeval_match_scores.append(numeric_metric.measure(match_case))
+        coach_score = numeric_metric.measure(coach_case)
+        match_score = numeric_metric.measure(match_case)
+        deepeval_coach_scores.append(coach_score)
+        deepeval_match_scores.append(match_score)
+
+        # Part 5 (docs/DESIGN.md section 14): "attach eval scores to traces when
+        # evals run" -- a no-op unless Langfuse is configured (observability.py).
+        attach_score(s.trace_id, "numeric_faithfulness_coach", coach_score)
+        attach_score(s.trace_id, "numeric_faithfulness_match", match_score)
 
     n = len(samples)
     return NumericEvalReport(

@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Document
+from observability import traced_span
 from rag.bm25 import Bm25Index
 from rag.dense import search as dense_search
 from rag.embeddings import Embedder
@@ -114,6 +115,25 @@ async def retrieve_ablation(
     """One named method's ranked doc_ids, for evals/retrieval_eval.py's ablation
     across BM25 / dense / hybrid / hybrid+rerank (docs/DESIGN.md section 12).
     `method`: "bm25" | "dense" | "hybrid" | "hybrid_rerank"."""
+    with traced_span("rag.retrieve_ablation", input=query, metadata={"method": method}) as span:
+        result = await _retrieve_ablation_impl(
+            session, query, method, embedder=embedder, reranker=reranker, doc_type=doc_type, top_k=top_k
+        )
+        if span is not None:
+            span.update(output=result)
+        return result
+
+
+async def _retrieve_ablation_impl(
+    session: AsyncSession,
+    query: str,
+    method: str,
+    *,
+    embedder: Embedder | None,
+    reranker: Reranker | None,
+    doc_type: str | None,
+    top_k: int,
+) -> list[str]:
     corpus = await _load_corpus(session, doc_type, None)
     if not corpus:
         return []
@@ -152,6 +172,26 @@ async def retrieve(
     doc_type: str | None = None,
     nationality: str | None = None,
     rewrite_fn: Callable[[str], str] = _default_rewrite,
+) -> RetrievalResult:
+    with traced_span("rag.retrieve", as_type="retriever", input=query) as span:
+        result = await _retrieve_impl(
+            session, query, embedder=embedder, reranker=reranker, doc_type=doc_type,
+            nationality=nationality, rewrite_fn=rewrite_fn,
+        )
+        if span is not None:
+            span.update(output=[d.doc_id for d in result.docs], metadata={"method": result.method})
+        return result
+
+
+async def _retrieve_impl(
+    session: AsyncSession,
+    query: str,
+    *,
+    embedder: Embedder | None,
+    reranker: Reranker | None,
+    doc_type: str | None,
+    nationality: str | None,
+    rewrite_fn: Callable[[str], str],
 ) -> RetrievalResult:
     docs = await _single_pass(session, query, embedder, reranker, doc_type, nationality)
     top_score = docs[0].score if docs else float("-inf")

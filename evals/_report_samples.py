@@ -31,6 +31,7 @@ from llm.narrator import (
 )
 from llm.provider import Provider, get_provider
 from llm.validator import ValidatedText
+from observability import current_trace_id, traced_span
 from pipeline.to_engine import load_candidate_pool, load_squad_player_ids, load_team_name, load_team_profile
 
 
@@ -45,6 +46,7 @@ class ReportSample:
     match_template: str
     match_result: ValidatedText
     match_allowed_values: set[float]
+    trace_id: str | None = None  # Part 5: lets callers attach an eval score after the fact
 
 
 async def generate_report_samples(
@@ -89,18 +91,26 @@ async def generate_report_samples(
             win_draw_loss=(sim.win_pct, sim.draw_pct, sim.loss_pct),
         )
 
-        samples.append(
-            ReportSample(
-                opponent_name=opponent_name,
-                analysis=analysis,
-                sim=sim,
-                coach_template=_coach_report_template(analysis, opponent_name),
-                coach_result=narrate_coach_report(analysis, opponent_name, provider),
-                coach_allowed_values=_coach_report_allowed_values(analysis),
-                match_template=_match_report_template(sim, opponent_name),
-                match_result=narrate_match_report(sim, opponent_name, provider),
-                match_allowed_values=_match_report_allowed_values(sim),
+        # One trace per sample -- both narrate_*_report calls' LLM generations
+        # (llm/narrator.py::_traced_complete) nest under it, and its id is handed
+        # back so evals/numeric_eval.py / evals/faithfulness_eval.py can attach
+        # their own score to it once they've computed one (observability.py's
+        # attach_score, since scoring happens after this function returns).
+        with traced_span("eval.sample", metadata={"opponent_name": opponent_name}):
+            trace_id = current_trace_id()
+            samples.append(
+                ReportSample(
+                    opponent_name=opponent_name,
+                    analysis=analysis,
+                    sim=sim,
+                    coach_template=_coach_report_template(analysis, opponent_name),
+                    coach_result=narrate_coach_report(analysis, opponent_name, provider),
+                    coach_allowed_values=_coach_report_allowed_values(analysis),
+                    match_template=_match_report_template(sim, opponent_name),
+                    match_result=narrate_match_report(sim, opponent_name, provider),
+                    match_allowed_values=_match_report_allowed_values(sim),
+                    trace_id=trace_id,
+                )
             )
-        )
 
     return samples

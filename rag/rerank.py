@@ -8,6 +8,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from config.settings import get_settings
+from observability import traced_span
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
@@ -32,9 +33,15 @@ def get_reranker(model_name: str | None = None) -> Reranker:
     def rerank(query: str, candidates: list[tuple[str, str]]) -> list[tuple[str, float]]:
         if not candidates:
             return []
-        pairs = [(query, text) for _doc_id, text in candidates]
-        scores = model.predict(pairs)
-        ranked = sorted(zip((c[0] for c in candidates), scores, strict=True), key=lambda t: -t[1])
-        return [(doc_id, float(score)) for doc_id, score in ranked]
+        with traced_span(
+            "rag.rerank", input=query, metadata={"model": name, "n_candidates": len(candidates)}
+        ) as span:
+            pairs = [(query, text) for _doc_id, text in candidates]
+            scores = model.predict(pairs)
+            ranked = sorted(zip((c[0] for c in candidates), scores, strict=True), key=lambda t: -t[1])
+            result = [(doc_id, float(score)) for doc_id, score in ranked]
+            if span is not None:
+                span.update(output=result[:5])  # top 5 only -- keep the trace payload small
+            return result
 
     return rerank

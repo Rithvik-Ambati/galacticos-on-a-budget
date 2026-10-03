@@ -49,4 +49,4 @@ lint:
 	ruff check .
 
 typecheck:
-	mypy engine rag llm pipeline db config api evals graph
+	mypy engine rag llm pipeline db config api evals graph observability.py

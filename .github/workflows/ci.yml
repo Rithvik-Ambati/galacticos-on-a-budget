@@ -45,8 +45,8 @@ jobs:
       - name: Typecheck (strict on engine/rag/llm)
         run: mypy engine rag llm
 
-      - name: Typecheck (pipeline/graph/db/config/api/evals)
-        run: mypy pipeline graph db config api evals
+      - name: Typecheck (pipeline/graph/db/config/api/evals/observability)
+        run: mypy pipeline graph db config api evals observability.py
 
       - name: Unit + integration tests
         run: pytest -q

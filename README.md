@@ -119,6 +119,27 @@ approximated, since this export has no shot-quality data — see
 what's real and what's derived. `DATA_SOURCE=synthetic` switches to the fictional
 generator instead (dev/test only — see "How to run it" above).
 
+## Observability
+
+Every LLM call, retrieval, rerank, SQL-tool call, and `graph/nodes.py` node
+(including the `analyse`/`opponent_counter`/`simulate` engine steps) is wrapped
+in a [Langfuse](https://langfuse.com) trace by `observability.py` — a single
+module every instrumented call site shares. It's a true no-op without
+`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` set (true in CI and by default:
+this project has no deployment to put real keys into), so tracing never needs a
+secret and never blocks anything.
+
+**To view a trace**: set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and
+`LANGFUSE_HOST` in `.env` (self-hosted Langfuse via `docker compose up -d`, or
+[Langfuse Cloud](https://cloud.langfuse.com)'s free tier), then run a normal
+session (`make api` + `make web`, or `make eval`). Every graph node shows up as
+its own `node.<name>` trace in the Langfuse UI, tagged with the game session's
+`session_id` — any LLM generation, retrieval, rerank, or SQL-tool call made
+while handling that node nests underneath it automatically. Running
+`evals/numeric_eval.py` or `evals/faithfulness_eval.py` attaches that sample's
+score (`numeric_faithfulness_*`, `ragas_faithfulness_*`) directly onto the trace
+its report was narrated in.
+
 ## Key design decisions (full detail in `docs/DECISIONS.md`)
 
 - **Real data by default**; synthetic Transfermarkt/Understat data (two

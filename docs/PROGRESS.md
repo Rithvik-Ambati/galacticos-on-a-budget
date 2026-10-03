@@ -694,3 +694,71 @@ exits 1.
 ```
 `python -m evals.check_faithfulness_gate` (and the nightly workflow) then prints
 `FAIL: faithfulness 0.5 is below the 0.9 gate.` and exits 1.
+
+## Part 5 -- observability
+
+**Starting state**: `config/settings.py` had Langfuse connection settings
+(`langfuse_public_key`/`langfuse_secret_key`/`langfuse_host`) but nothing in the
+codebase actually imported `langfuse` or created a single trace -- no gaps to
+"fill," the whole integration needed building.
+
+**What was built**: `observability.py` (new, top-level -- not inside `engine/`,
+`llm/`, or `rag/`, since CLAUDE.md's module boundaries forbid `engine/`
+importing `llm/`/`api/`/`db/`, and this needs to be callable from
+`graph/nodes.py`'s engine-call sites as well as `rag/`/`llm/`). Two primitives:
+`traced_span` (a context manager, no-op yielding `None` unless
+`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` are set) and `traced_node` (a
+decorator for `graph/nodes.py`'s `GameState -> dict` node functions, tagging
+the whole call with `state["session_id"]`).
+
+Instrumented:
+- **Every node** in `graph/nodes.py` (`draw`, `validate`, `analyse`,
+  `narrate_report`, `opponent_counter`, `simulate`, `narrate_match`, and the
+  post-interrupt half of `chat`) via `@traced_node` -- covers "engine
+  analyse/counter/simulate spans tagged with session_id" directly, since those
+  are node functions, plus every other node as a side effect. `build` and
+  `user_decision` are skipped deliberately: they're pure `interrupt()` calls
+  with no work before pausing, and wrapping them would double-trace (LangGraph
+  re-executes a node from the top on resume, so a span opened before
+  `interrupt()` would appear to "complete" when the graph merely paused).
+- **Every real LLM call**: `llm/narrator.py::_traced_complete` wraps both
+  `provider.complete()` call sites (first attempt and the regenerate retry) as
+  a `generation` span, nested under whichever node's trace is active --
+  Langfuse's OTEL-based session propagation means `session_id` only needs
+  setting once, at the node level, not repeated on every nested span.
+- **Retrieval**: `rag/retriever.py::retrieve`/`retrieve_ablation` (renamed the
+  originals to `_retrieve_impl`/`_retrieve_ablation_impl` and added thin traced
+  public wrappers, to avoid re-indenting either function's existing
+  retry/fallback logic).
+- **Rerank**: `rag/rerank.py::get_reranker`'s returned closure -- the single
+  choke point every rerank call in the codebase already goes through.
+- **SQL tool**: `llm/sql_tool.py::execute_guarded_sql` (same rename+wrapper
+  pattern as retrieval).
+- **Eval scores attached to traces**: `evals/_report_samples.py` now opens one
+  `eval.sample` trace per generated sample (both `narrate_coach_report`/
+  `narrate_match_report` calls nest under it) and hands back its `trace_id`.
+  `evals/numeric_eval.py` and `evals/faithfulness_eval.py` call the new
+  `observability.attach_score(trace_id, name, value)` after scoring each
+  sample, recording `numeric_faithfulness_*`/`ragas_faithfulness_*` directly
+  against that trace.
+- **README**: new "Observability" section -- how to point `.env` at a Langfuse
+  instance and what you'll see once you do.
+
+**Tests**: `tests/test_observability.py` (new, 10 cases) against a fake
+Langfuse client (no real server/keys in this environment) -- confirms both the
+no-op path (nothing configured) and that a configured client receives the
+right `start_as_current_observation`/`update`/`create_score` calls, including
+session_id tagging and trace-id capture. `tests/test_graph.py` gained
+`test_full_session_runs_with_tracing_configured`: the same full draw -> build
+-> analyse -> lock_in -> simulate flow as the existing end-to-end test, but
+with a fake client active, asserting every `node.*` span in that flow actually
+carries `session_id`. Full backend suite: 134 passing, ruff/mypy clean (added
+`observability.py` to both the Makefile's and `ci.yml`'s typecheck targets).
+
+**Not done**: real end-to-end verification against an actual running Langfuse
+instance -- this environment has no Langfuse server and no keys, so everything
+above is verified against a faithful fake of the SDK's documented interface
+(`langfuse==4.16.0`'s own `Langfuse`/`LangfuseSpan` classes, inspected directly
+via `inspect.signature`), not a live trace observed in a real Langfuse UI. The
+project owner should sanity-check one real session against a local
+`docker compose up -d` Langfuse instance before relying on this.

@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from evals._report_samples import generate_report_samples
 from llm.provider import AnthropicProvider, Provider, StubProvider, get_provider
+from observability import attach_score
 
 if TYPE_CHECKING:
     from ragas.llms import BaseRagasLLM
@@ -84,6 +85,9 @@ async def run_faithfulness_eval(
         return None
 
     if isinstance(provider, StubProvider):
+        for s in samples:
+            attach_score(s.trace_id, "ragas_faithfulness_coach", 1.0)
+            attach_score(s.trace_id, "ragas_faithfulness_match", 1.0)
         return FaithfulnessEvalReport(
             n_samples=len(samples), coach_faithfulness=1.0, match_faithfulness=1.0, judge="stub-by-construction"
         )
@@ -103,24 +107,26 @@ async def run_faithfulness_eval(
     coach_scores: list[float] = []
     match_scores: list[float] = []
     for s in samples:
-        coach_scores.append(
-            await metric.single_turn_ascore(
-                SingleTurnSample(
-                    user_input=f"Give a tactical debrief vs {s.opponent_name}.",
-                    response=s.coach_result.text,
-                    retrieved_contexts=[s.coach_template],
-                )
+        coach_score = await metric.single_turn_ascore(
+            SingleTurnSample(
+                user_input=f"Give a tactical debrief vs {s.opponent_name}.",
+                response=s.coach_result.text,
+                retrieved_contexts=[s.coach_template],
             )
         )
-        match_scores.append(
-            await metric.single_turn_ascore(
-                SingleTurnSample(
-                    user_input=f"Give a match report vs {s.opponent_name}.",
-                    response=s.match_result.text,
-                    retrieved_contexts=[s.match_template],
-                )
+        match_score = await metric.single_turn_ascore(
+            SingleTurnSample(
+                user_input=f"Give a match report vs {s.opponent_name}.",
+                response=s.match_result.text,
+                retrieved_contexts=[s.match_template],
             )
         )
+        coach_scores.append(coach_score)
+        match_scores.append(match_score)
+        # Part 5: "attach eval scores to traces when evals run" -- no-op unless
+        # Langfuse is configured.
+        attach_score(s.trace_id, "ragas_faithfulness_coach", coach_score)
+        attach_score(s.trace_id, "ragas_faithfulness_match", match_score)
 
     return FaithfulnessEvalReport(
         n_samples=len(samples),

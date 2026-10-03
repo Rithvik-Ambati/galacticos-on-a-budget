@@ -31,6 +31,7 @@ from engine.simulation import simulate_match, simulate_two_legs
 from graph.state import GameState
 from llm.narrator import narrate_coach_report, narrate_match_report
 from llm.provider import get_provider
+from observability import traced_node, traced_span
 from pipeline.to_engine import (
     load_candidate_pool,
     load_lineup_frequency,
@@ -89,6 +90,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
                 )
         return _fieldable_cache[team_id]
 
+    @traced_node("draw")
     async def draw(state: GameState) -> dict[str, Any]:
         tournament = TOURNAMENT_BY_MODE[state["mode"]]
         async with session_factory() as session:
@@ -142,6 +144,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             "lineup_assignments": payload["assignments"],
         }
 
+    @traced_node("validate")
     async def validate(state: GameState) -> dict[str, Any]:
         async with session_factory() as session:
             lineup = await _lineup_from_state(session, state)
@@ -152,6 +155,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
     def validate_router(state: GameState) -> str:
         return "analyse" if state.get("validation_ok") else "build"
 
+    @traced_node("analyse")
     async def analyse(state: GameState) -> dict[str, Any]:
         async with session_factory() as session:
             lineup = await _lineup_from_state(session, state)
@@ -168,6 +172,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             )
         return {"analysis": analysis.model_dump()}
 
+    @traced_node("narrate_report")
     async def narrate_report(state: GameState) -> dict[str, Any]:
         from engine.schemas import LineupAnalysis
 
@@ -186,6 +191,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             return "opponent_counter"
         return "simulate"
 
+    @traced_node("opponent_counter")
     async def opponent_counter(state: GameState) -> dict[str, Any]:
         async with session_factory() as session:
             lineup = await _lineup_from_state(session, state)
@@ -209,6 +215,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             "decision": None,
         }
 
+    @traced_node("simulate")
     async def simulate(state: GameState) -> dict[str, Any]:
         async with session_factory() as session:
             lineup = await _lineup_from_state(session, state)
@@ -230,6 +237,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             "post_match_analysis": post_match.model_dump(),
         }
 
+    @traced_node("narrate_match")
     async def narrate_match(state: GameState) -> dict[str, Any]:
         from engine.schemas import SimulationResult
 
@@ -247,8 +255,11 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             return {"_chat_ended": True}
 
         question = payload["question"]
-        async with session_factory() as session:
-            answer = await answer_question(session, question, state, provider)
+        with traced_span("node.chat", session_id=state.get("session_id"), input=question) as span:
+            async with session_factory() as session:
+                answer = await answer_question(session, question, state, provider)
+            if span is not None:
+                span.update(output=answer)
         messages = [
             *state.get("messages", []),
             {"role": "user", "content": question},

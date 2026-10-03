@@ -8,6 +8,20 @@ from __future__ import annotations
 from engine.schemas import LineupAnalysis, SimulationResult
 from llm.provider import Provider
 from llm.validator import ValidatedText, validate_and_fix
+from observability import traced_span
+
+
+def _traced_complete(provider: Provider, prompt: str, system: str) -> str:
+    """Every real LLM call goes through here -- docs/DESIGN.md section 14's
+    "Langfuse traces cover every LLM call." A no-op wrapper when tracing isn't
+    configured (observability.py), so this adds nothing but a span when it is."""
+    with traced_span(
+        "llm.narrate", as_type="generation", input=prompt, metadata={"provider": type(provider).__name__}
+    ) as span:
+        output = provider.complete(prompt, system=system)
+        if span is not None:
+            span.update(output=output)
+        return output
 
 
 def _coach_report_template(analysis: LineupAnalysis, team_name: str) -> str:
@@ -81,9 +95,9 @@ def narrate_coach_report(analysis: LineupAnalysis, team_name: str, provider: Pro
         "facts into natural, confident prose. Do not introduce, change, round "
         "differently, or drop any number -- every figure must appear exactly as given."
     )
-    first = provider.complete(template, system=system)
+    first = _traced_complete(provider, template, system)
     return validate_and_fix(
-        first, allowed, regenerate=lambda: provider.complete(template, system=system), fallback_text=template
+        first, allowed, regenerate=lambda: _traced_complete(provider, template, system), fallback_text=template
     )
 
 
@@ -116,7 +130,7 @@ def narrate_match_report(sim: SimulationResult, opponent_name: str, provider: Pr
         "You are writing a short match report. Restyle the following facts into "
         "natural prose. Do not introduce, change or drop any number, minute or score."
     )
-    first = provider.complete(template, system=system)
+    first = _traced_complete(provider, template, system)
     return validate_and_fix(
-        first, allowed, regenerate=lambda: provider.complete(template, system=system), fallback_text=template
+        first, allowed, regenerate=lambda: _traced_complete(provider, template, system), fallback_text=template
     )
