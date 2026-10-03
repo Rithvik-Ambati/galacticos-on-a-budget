@@ -1,4 +1,4 @@
-.PHONY: up down migrate pipeline test eval eval-retrieval eval-embeddings eval-faithfulness eval-numeric eval-live api web lint typecheck
+.PHONY: up down migrate pipeline test eval eval-retrieval eval-embeddings eval-faithfulness eval-numeric eval-live train-rating-v2 api web lint typecheck
 
 up:
 	docker compose up -d
@@ -38,6 +38,13 @@ eval-numeric:
 
 eval-live:
 	python -m evals.live_llm_test
+
+# Needs the real dataset (python -m pipeline.download_real_data, DATA_SOURCE=real
+# python -m pipeline.run_all first) -- trains and backtests engine/rating_v2.py's
+# model from scratch every time (no model file is ever committed), prints and
+# writes the v1-vs-v2 comparison to evals/reports/rating_v2_backtest.json.
+train-rating-v2:
+	python -m pipeline.train_rating_v2
 
 api:
 	uvicorn api.main:app --reload --port 8000

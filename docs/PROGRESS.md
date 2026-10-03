@@ -762,3 +762,46 @@ above is verified against a faithful fake of the SDK's documented interface
 via `inspect.signature`), not a live trace observed in a real Langfuse UI. The
 project owner should sanity-check one real session against a local
 `docker compose up -d` Langfuse instance before relying on this.
+
+## Part 6 -- rating v2 (mandatory, per the project owner's instruction)
+
+Full detail in `docs/DECISIONS.md` "Rating v2: built, backtested, and measured
+as not clearly beating v1."
+
+Built: `pipeline/rating_v2_dataset.py` (8,680 usable real historical matches
+out of ~89k in the full Transfermarkt export, each side needing >=6 of 11
+starters covered by a player this project has an `ability_score` for),
+`engine/rating_v2.py::RatingV2` (XGBoost margin regressor + logistic
+calibration, same `RatingModel` protocol as v1, sub-ratings unchanged from v1),
+`pipeline/train_rating_v2.py` (`make train-rating-v2` -- trains, calibrates,
+runs SHAP, backtests against v1, writes `evals/reports/rating_v2_backtest.json`,
+never commits a model file).
+
+**Backtest result** (80/20 split, seed 42, 6,944 train / 1,736 test):
+
+| | Correlation with actual goal margin | Brier score |
+|---|---|---|
+| v1 (proxy) | 0.3311 | 0.2284 |
+| v2 (XGBoost) | 0.3409 | 0.2364 |
+
+v2 improves correlation by a real but narrow margin and is measurably worse on
+Brier -- under the strict "must improve on both, or it doesn't count" bar this
+session applied, **v2 does not beat v1**. `engine/rating.py::get_default_rating_model()`
+stays `RatingV1`, exactly matching the project owner's own instruction for this
+outcome ("otherwise keep v1"). `RatingV2` is fully built, tested, and available
+behind the same interface either way -- the comparison is written whether or
+not the swap happens, also per instruction.
+
+**Tests**: 15 new cases across `tests/test_rating_v2_dataset.py`, `tests/
+test_rating_v2.py`, `tests/test_train_rating_v2.py` -- including a real
+`OverflowError` the calibration math hit on its first run (`math.exp` on an
+unclipped logit for an extreme margin) and fixed before it could reach
+production. Full backend suite: 149 passing, ruff/mypy clean. None of the new
+tests need the real ~241MB dataset to run in CI -- they use tiny fixtures or
+exercise the "not enough real data -> skip cleanly" path directly.
+
+**Not done**: hyperparameter tuning / feature-set iteration to try to turn the
+narrow, mixed result into a clear win -- out of scope for "build it, backtest
+it, report honestly," and this session's read of the instruction is that a
+mixed result should be reported as what it is, not optimized against after the
+fact to manufacture a "win."

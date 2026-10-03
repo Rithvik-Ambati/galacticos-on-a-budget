@@ -559,3 +559,76 @@ trace entries for one logical pause/resume, with the first a misleading
 false-error-looking artifact. `chat` does real work (`answer_question`) *after*
 `interrupt()` returns, so only that portion -- which only ever runs once per
 resume, never during the pausing call -- gets a span.
+
+## Rating v2: built, backtested, and measured as not clearly beating v1 (Part 6)
+
+**What**: `engine/rating_v2.py::RatingV2` (an XGBoost regressor over 18 zone-
+average features -- 9 each for the home/away side, same `(vertical,
+horizontal)` taxonomy `config.game.Slot`/`engine/zones.py` already use)
+predicts a goal margin for a historical matchup, calibrated via a logistic
+win-probability fit (`Calibration`) into a 0-100 "overall" -- replacing only
+v1's `overall` field, not its sub-ratings (those stay exactly `RatingV1`'s own
+output; the weaknesses/swaps/narration machinery that reads them needed no
+change). `pipeline/rating_v2_dataset.py` builds the training set from the real
+Transfermarkt export's *entire* match history (not just the current WC2026/
+UCL2025-26 season -- rating v2 needs volume): 8,680 real historical matches
+where at least 6 of each side's 11 starters are players this project already
+has an `ability_score` for. No real shot-level xG exists in this dataset
+(`pipeline/real_source.py`'s own docstring already says so), so the regression
+target is the actual **goal margin** -- a measured substitute, not a guessed
+one.
+
+**Backtest** (`pipeline/train_rating_v2.py`, 80/20 train/test split, seed 42,
+6,944 train / 1,736 test examples): v1 here means its own weighted sub-rating
+formula restricted to the 3 sub-ratings computable from zone-average data alone
+(attack/midfield_control/defence -- matchup/cohesion/balance all need live
+context, like the opponent's threat map or role_fit, that a historical result
+alone doesn't carry), re-normalized to sum to 1, and turned into a margin via
+`home_proxy_overall - away_proxy_overall` for a fair side-vs-side comparison.
+
+| | Correlation with actual goal margin | Brier score (lower is better) |
+|---|---|---|
+| v1 (proxy) | 0.3311 | 0.2284 |
+| v2 (XGBoost) | 0.3409 | 0.2364 |
+
+Top 5 SHAP features by mean \|value\|: `home_att_center`, `away_mid_center`,
+`home_def_center`, `away_def_center`, `away_att_center` -- center-channel
+features dominate, consistent with `config/game.py`'s own formations putting
+the most players through the center of the pitch.
+
+**Verdict: v2 does not beat v1**, and the live default (`engine/rating.py::
+get_default_rating_model()`) stays `RatingV1`, per the project owner's own
+instruction ("swap in through the RatingModel interface only if it beats v1;
+otherwise keep v1"). v2 improves correlation with the real outcome by a real
+but narrow margin (+0.0098, about 3% relative) while its Brier score is
+measurably *worse* (0.2364 vs 0.2284) -- an improvement on one axis and a
+regression on the other is a trade-off, not a win. The bar applied here is
+deliberately strict: v2 must improve correlation **and** not regress
+calibration to count as "beats v1"; a result this mixed doesn't clear it.
+
+This also sidesteps a real engineering cost that a narrow win wouldn't have
+justified: `get_default_rating_model()` is synchronous and called from many
+places with no database access (`engine/` may not import `pipeline/`/`db/`,
+CLAUDE.md's module boundaries) -- making `RatingV2` the live default would need
+an async, lazily-cached loader wired into `graph/nodes.py` with a safe fallback
+to v1 when real data isn't available (always true in CI/synthetic contexts).
+`RatingV2` is fully implemented and usable through the exact same `RatingModel`
+protocol `RatingV1` is, so that wiring is there to do cheaply if a future
+backtest (more data, a richer feature set) shows a clearer win.
+
+**Reproducibility**: no trained model is committed anywhere. `make
+train-rating-v2` (needs the real dataset: `python -m pipeline.download_real_data`,
+then `DATA_SOURCE=real python -m pipeline.run_all`) retrains and re-backtests
+from scratch every time, from the same real data and the same seed --
+`evals/reports/rating_v2_backtest.json` (gitignored, like every other
+`evals/reports/` output) is regenerated, not restored.
+
+**Tests**: `tests/test_rating_v2_dataset.py` (zone-feature averaging and the
+coverage threshold, plus an end-to-end run against a tiny fixture gzip CSV
+pair -- not the real 126MB files), `tests/test_rating_v2.py` (calibration math,
+including a real `OverflowError` this caught on its first run and fixed --
+`math.exp` on an unclipped logit overflows for an extreme margin times a steep
+slope -- and `RatingV2.rate()` against a fake model), `tests/
+test_train_rating_v2.py` (the pure helper functions, and `run_backtest()`'s
+"not enough real data" skip path). None of these need the real dataset to run
+in CI.
