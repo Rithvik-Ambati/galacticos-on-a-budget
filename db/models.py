@@ -10,6 +10,7 @@ import datetime as dt
 import uuid
 
 from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from db.vector_type import VectorType
@@ -151,7 +152,12 @@ class Document(Base):
     doc_type: Mapped[str] = mapped_column(String(32), index=True)
     entity_id: Mapped[str] = mapped_column(String(32), index=True)
     text: Mapped[str] = mapped_column(String)
-    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    # plain json has no default GIN operator class on Postgres (the 0001 migration's
+    # ix_documents_metadata_gin index needs jsonb); SQLite keeps the generic JSON
+    # type it's always used, since this never widens the declared Mapped type.
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), default=dict
+    )
     embedding: Mapped[list[float] | None] = mapped_column(VectorType(EMBEDDING_DIM), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
     embed_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -166,7 +172,7 @@ class GameSession(Base):
     opponent_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     state: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(dt.UTC)
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.UTC)
     )
 
 
@@ -200,7 +206,7 @@ class IngestMetadata(Base):
     data_source: Mapped[str] = mapped_column(String(16))  # "real" | "synthetic"
     dataset_snapshot_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pipeline_run_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(dt.UTC)
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.UTC)
     )
 
 
@@ -212,5 +218,5 @@ class EvalRun(Base):
     metrics: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     passed: Mapped[bool] = mapped_column(Boolean)
     created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(dt.UTC)
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.UTC)
     )

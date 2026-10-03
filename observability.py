@@ -41,9 +41,32 @@ def _client() -> Any | None:
     settings = get_settings()
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         return None
-    from langfuse import get_client
+    from langfuse import Langfuse
 
-    return get_client()
+    # Constructed explicitly with our own settings values, not get_client()'s
+    # implicit env-var discovery: config.settings reads .env into this
+    # project's own Settings model, it never mutates os.environ, so the SDK's
+    # own "read LANGFUSE_PUBLIC_KEY etc. from the process environment" lazy
+    # init finds nothing and silently no-ops -- a real bug this caught on its
+    # first run against an actual Langfuse instance (every test before that
+    # ran the no-op path, which looks identical whether this is wired up
+    # correctly or not).
+    return Langfuse(
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+        host=settings.langfuse_host,
+    )
+
+
+def warm_up() -> None:
+    """Pays the Langfuse client's one-time construction cost (an actual client
+    handshake, not just a Python object) during `api/main.py`'s startup instead
+    of on whichever request happens to hit `traced_span` first -- found during
+    manual verification: the first `draw()` call after a fresh server start was
+    measurably slower once real tracing was actually wired up (Part 5 built this
+    against a fake client, so the real cost was never exercised until now). A
+    no-op when tracing isn't configured, same as everything else here."""
+    _client()
 
 
 @contextmanager

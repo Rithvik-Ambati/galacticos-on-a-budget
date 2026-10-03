@@ -50,12 +50,19 @@ class _FakeClient:
         self.scores.append({"trace_id": trace_id, "name": name, "value": value})
 
 
-def test_traced_span_is_a_noop_without_configured_keys() -> None:
+def test_traced_span_is_a_noop_without_configured_keys(monkeypatch) -> None:
+    # Explicitly forced unconfigured rather than relying on no ambient
+    # LANGFUSE_* keys -- a real .env (e.g. a local docker-compose Langfuse
+    # instance someone has configured for themselves) must not make this
+    # test's premise false out from under it.
+    monkeypatch.setattr(observability, "_client", lambda: None)
     with observability.traced_span("x") as span:
         assert span is None
 
 
-def test_traced_node_decorator_is_a_noop_without_configured_keys() -> None:
+def test_traced_node_decorator_is_a_noop_without_configured_keys(monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_client", lambda: None)
+
     @observability.traced_node("x")
     async def node(state: dict) -> dict:
         return {"ok": True}
@@ -63,6 +70,18 @@ def test_traced_node_decorator_is_a_noop_without_configured_keys() -> None:
     import asyncio
 
     assert asyncio.run(node({"session_id": "s1"})) == {"ok": True}
+
+
+def test_warm_up_is_a_noop_without_configured_keys(monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_client", lambda: None)
+    observability.warm_up()  # must not raise
+
+
+def test_warm_up_calls_client_once(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(observability, "_client", lambda: calls.append(1))
+    observability.warm_up()
+    assert calls == [1]
 
 
 def test_traced_span_drives_a_configured_client(monkeypatch) -> None:
@@ -79,7 +98,8 @@ def test_traced_span_drives_a_configured_client(monkeypatch) -> None:
     assert {"output": "world"} in fake.last_span.updates
 
 
-def test_current_trace_id_is_none_without_configured_keys() -> None:
+def test_current_trace_id_is_none_without_configured_keys(monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_client", lambda: None)
     assert observability.current_trace_id() is None
 
 
@@ -93,7 +113,8 @@ def test_current_trace_id_returns_the_active_trace_on_a_configured_client(monkey
     assert trace_id == "trace-1"
 
 
-def test_attach_score_is_a_noop_without_configured_keys() -> None:
+def test_attach_score_is_a_noop_without_configured_keys(monkeypatch) -> None:
+    monkeypatch.setattr(observability, "_client", lambda: None)
     observability.attach_score("trace-1", "my_metric", 0.9)  # must not raise
 
 

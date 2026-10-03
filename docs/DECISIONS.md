@@ -667,3 +667,130 @@ slope -- and `RatingV2.rate()` against a fake model), `tests/
 test_train_rating_v2.py` (the pure helper functions, and `run_backtest()`'s
 "not enough real data" skip path). None of these need the real dataset to run
 in CI.
+
+## Postgres + pgvector + Langfuse v4, verified live -- 5 real bugs found and fixed
+
+**What**: Docker became available partway through this project (it wasn't
+reachable in the sandbox this build was originally developed in -- see "SQLite
+fallback" above), so the Postgres/pgvector path and a real Langfuse instance
+were exercised live for the first time, end to end: `docker compose up -d`,
+`alembic upgrade head`, the full real-data pipeline, the full `pytest` suite,
+the full Playwright E2E suite, and a real session's traces checked in the
+actual Langfuse UI. Every one of these had been *written* against the
+possibility of Postgres/Langfuse, per CLAUDE.md's "keep both paths working,"
+but never actually run against them -- five real, previously-undetected bugs
+surfaced in the first hour of doing so, all specific to the Postgres/Langfuse
+code paths (the SQLite/no-op paths these mirror were never affected and still
+pass every existing test).
+
+1. **`documents.metadata_json` as plain `json`, not `jsonb`.** Postgres has no
+   default GIN operator class for plain `json`, so migration `0001`'s own
+   `CREATE INDEX ... USING gin (metadata_json)` failed outright on its first
+   real run. Fixed in `db/models.py`: `JSON().with_variant(JSONB, "postgresql")`
+   -- SQLite keeps the generic `JSON` type it always used; Postgres gets
+   `jsonb`, which the GIN index actually supports.
+2. **Three `DateTime` columns inserting timezone-aware values into
+   timezone-naive columns.** `GameSession.created_at`, `IngestMetadata.
+   pipeline_run_at`, and `EvalRun.created_at` all default to `dt.datetime.now(
+   dt.UTC)` (correctly timezone-aware) but were declared as plain `DateTime`
+   (timezone-naive). SQLite never complained (it has no real datetime type, just
+   stores whatever string/object it's given); `asyncpg` does, and raised `can't
+   subtract offset-naive and offset-aware datetimes` on the very first ingest
+   pipeline run against Postgres. Fixed by declaring all three
+   `DateTime(timezone=True)`.
+3. **`rag/dense.py`'s Postgres branch used a raw string in `order_by`.**
+   `order_by("sim DESC")` is no longer accepted by modern SQLAlchemy without
+   `text()` -- a `CompileError` on the very first real pgvector query. Fixed by
+   keeping the labelled `sim` expression as a Python object and calling
+   `sim.desc()` on it directly, which also let the same object be reused for
+   both the `SELECT` list and the `ORDER BY` clause instead of being
+   re-declared.
+4. **The same Postgres branch silently dropped the `doc_type` filter.** It
+   built a fresh `select(...)` from scratch instead of reusing/extending the
+   SQLite branch's already-filtered `stmt` -- a metadata-filtered dense search
+   on Postgres would have silently searched the *entire* corpus regardless of
+   `doc_type`. Fixed by applying the same conditional `.where(Document.doc_type
+   == doc_type)` to the Postgres statement too.
+5. **`Document.embedding.op("<=>")(...)` has no declared return type**, so
+   SQLAlchemy infers the result type of the whole `1 - (...)` expression from
+   the *left* operand -- `VectorType` -- including the literal `1`'s own bind
+   parameter. `VectorType`'s Postgres bind processor expects a list and crashes
+   on an `int` (`'int' object is not iterable`). Fixed with `op("<=>",
+   return_type=Float)`, so only the actual vector operand gets `VectorType`'s
+   bind processor and the literal `1` is bound as a plain float.
+6. **`observability.py::_client()` validated Langfuse settings but never
+   passed them to the SDK.** `get_client()` (no arguments) reads
+   `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY`/`HOST` from `os.environ` directly --
+   but `config.settings` reads `.env` into its own Pydantic model and never
+   mutates the process environment, so every trace silently initialized
+   disabled ("Authentication error: ... initialized without public_key") no
+   matter how correctly `.env` was configured. Every test and every manual
+   check before this one used a *fake* client (Part 5's own test suite,
+   deliberately, since no real instance existed yet), so this was invisible
+   until a real instance existed to check against. Fixed by constructing
+   `Langfuse(public_key=..., secret_key=..., host=...)` explicitly with
+   `config.settings`'s own values instead of relying on `get_client()`'s
+   implicit environment-variable discovery.
+
+**A sixth, non-bug finding worth recording**: once tracing was *actually*
+wired up end to end, the first `draw()` call after a fresh server start
+measurably slowed down (enough to flake a Playwright assertion with a 5s
+timeout) -- the Langfuse client's first construction does real client/network
+setup, not just object allocation, and that cost was previously invisible
+since `_client()` never did anything real. Fixed by calling the new
+`observability.warm_up()` once during `api/main.py`'s `lifespan` startup
+instead of paying that cost on whichever request happens to hit `traced_span`
+first.
+
+**Also found and fixed**: `tests/test_observability.py` had four tests
+asserting "without configured keys" behaviour that implicitly depended on
+the local `.env` never having real Langfuse keys in it -- true by accident
+until this verification, false the moment a real `docker-compose.yml`
+Langfuse instance got configured for local use. Added an autouse
+`conftest.py` fixture (`_no_real_langfuse_calls`) that forces
+`observability._client` to `None` for every test by default, so the whole
+suite's determinism no longer depends on what happens to be in a developer's
+own `.env` -- tests that exercise the "configured" path already override this
+per-test with their own `monkeypatch.setattr`, which simply wins.
+
+**Verified, concretely**: `docker compose up -d` brings up 8 healthy
+containers (the app's own `postgres`/`redis`, plus Langfuse's `langfuse-web`/
+`langfuse-worker`/`langfuse-postgres`/`langfuse-redis`/`clickhouse`/`minio`);
+`alembic upgrade head` creates all 15 tables, the `vector` extension (0.8.7),
+the `gaffer_ro` role, the GIN index, and the HNSW index
+(`ix_documents_embedding_hnsw ... USING hnsw (embedding vector_cosine_ops)`);
+the full real-data pipeline populates 4,755 players / 490 clubs / 48 national
+teams / 2,595 squad rows / 4,839 documents (every one with a non-null
+embedding) against live Postgres; a hybrid retrieval query with metadata
+filters (`doc_type="player_profile"`, `nationality="Brazil"`) returns real,
+correctly-filtered results via `method="hybrid_rerank"` against the pgvector
+HNSW path, not any in-memory fallback (`session.bind.dialect.name ==
+"postgresql"` confirmed); the full `pytest` suite (152 tests) and the full
+Playwright E2E batch (6/6) both pass against the Postgres-backed app; and a
+real Playwright session's traces -- `node.draw`, `node.validate`, `node.
+analyse`, `node.narrate_report`, `node.opponent_counter`, `node.simulate`,
+`node.narrate_match`, `node.chat`, with `llm.narrate` (type `GENERATION`) and
+`rag.retrieve` (type `RETRIEVER`) nested underneath -- were confirmed by
+signing into the real Langfuse UI and reading them directly, not inferred
+from logs.
+
+**Langfuse version note**: `docker-compose.yml` previously pinned
+`langfuse/langfuse:2`, the pre-OTLP self-hosted image, while the installed
+Python SDK is 4.16.0 (OTEL/OTLP-based) -- incompatible outright, which is
+exactly bug #6 above's root cause once actually tested. Replaced with the
+official Langfuse v4 self-host composition (`docker.langfuse.com/langfuse/
+langfuse:4` + `langfuse-worker:4`, their own Postgres/Redis, ClickHouse, and
+MinIO for S3-compatible event storage) fetched from Langfuse's own
+`docker-compose.yml` and adapted: service names prefixed/renamed to avoid
+port collisions with the app's own `postgres`/`redis` (both stacks would
+otherwise fight over 5432/6379), dev-only credentials throughout matching
+this repo's existing placeholder style, and `LANGFUSE_INIT_*` env vars so a
+fresh `docker compose up -d` auto-provisions a usable org/project/API-key/
+user without a manual sign-up step. Also fixed along the way: the official
+image reference for MinIO on Docker Hub (`minio/minio`) no longer exists
+(`pull access denied`) -- replaced with `cgr.dev/chainguard/minio`, matching
+upstream's own current compose file; and `langfuse-web`'s healthcheck
+initially failed because Next.js's standalone server binds to `$HOSTNAME`
+when set (Docker defaults this to the container id, which resolves to the
+container's own IP, not "every interface") -- fixed with an explicit
+`HOSTNAME=0.0.0.0` override.

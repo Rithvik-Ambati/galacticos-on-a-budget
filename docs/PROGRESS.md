@@ -874,3 +874,57 @@ each WC2026 team's real name from `games.csv.gz`'s own
 `docs/DECISIONS.md`** (Part 2b's fallback audit, Part 2c's real-vs-estimated
 audit) -- both now reflect 48/48 WC2026 teams, not 43/48. Full backend suite
 re-run: 149 passing (`tests/test_real_source.py`, new, +1), ruff/mypy clean.
+
+## Postgres + pgvector + Langfuse v4, verified live
+
+Full detail in `docs/DECISIONS.md` "Postgres + pgvector + Langfuse v4, verified
+live -- 5 real bugs found and fixed." Docker became available in this
+environment partway through the project; this is that verification, run once
+Docker actually worked.
+
+`docker compose up -d` -> 8 healthy containers (the app's own `postgres`/
+`redis`, plus a full Langfuse v4 self-host: `langfuse-web`, `langfuse-worker`,
+`langfuse-postgres`, `langfuse-redis`, `clickhouse`, `minio` -- the old
+`langfuse/langfuse:2` image was replaced, since it predates the OTLP protocol
+the installed SDK, 4.16.0, actually speaks). `alembic upgrade head` -> 15
+tables, `vector` 0.8.7, the `gaffer_ro` readonly role, the
+`ix_documents_metadata_gin` and `ix_documents_embedding_hnsw` indexes. Full
+real-data pipeline -> 4,755 players / 490 clubs / 48 national teams / 2,595
+squad rows / 4,839 documents (all embedded) in live Postgres.
+
+**6 real bugs found and fixed, every one specific to a code path that had
+never actually run against Postgres or a real Langfuse instance before**:
+`documents.metadata_json` needed `jsonb` not `json` (GIN has no default
+opclass for plain json); three `DateTime` columns needed
+`timezone=True` (asyncpg rejects tz-aware values into tz-naive columns,
+SQLite never did); `rag/dense.py`'s Postgres branch used a raw-string
+`order_by` SQLAlchemy no longer accepts, and separately dropped the
+`doc_type` filter entirely on that branch; the pgvector `<=>` operator needed
+an explicit `return_type=Float` or its result type contaminates the whole
+expression's bind parameters; and `observability.py` validated Langfuse
+settings but never actually passed them to the SDK, so every trace silently
+initialized disabled regardless of `.env`. Also fixed: a real cold-start
+latency bug (the first trace after a server restart was slow enough to flake
+a Playwright test) via a new `observability.warm_up()` called from `api/
+main.py`'s startup; a stale "without configured keys" assumption in 4
+existing tests, fixed with a new autouse `conftest.py` fixture so the test
+suite's determinism doesn't depend on a developer's own `.env` contents;
+MinIO's Docker Hub image no longer existing (`cgr.dev/chainguard/minio`
+instead); and `langfuse-web`'s healthcheck failing because Next.js's
+standalone server binds to `$HOSTNAME` (Docker's container-id default, not
+"every interface") unless overridden.
+
+**Verified**: a hybrid retrieval query with metadata filters (`doc_type`,
+`nationality`) returns real, correctly-filtered results via the pgvector HNSW
+path (`method="hybrid_rerank"`, confirmed `session.bind.dialect.name ==
+"postgresql"`), not any in-memory fallback. Full `pytest` suite: 152 passing.
+Full Playwright E2E batch: 6/6 passing against the Postgres-backed app. A real
+session's traces -- `node.draw`, `node.validate`, `node.analyse`, `node.
+narrate_report`, `node.opponent_counter`, `node.simulate`, `node.
+narrate_match`, `node.chat`, with `llm.narrate` (`GENERATION`) and `rag.
+retrieve` (`RETRIEVER`) nested underneath -- confirmed by signing into the
+real Langfuse UI and reading them directly.
+
+**README.md updated**: Docker Compose is now the primary "how to run it" path
+(previously SQLite-only, since Docker wasn't reachable when that section was
+first verified); SQLite remains documented as the no-Docker fallback.

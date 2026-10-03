@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import observability
 from api.routers import router
 from db.bootstrap import create_all
 from db.models import IngestMetadata
@@ -32,6 +33,7 @@ async def latest_ingest_metadata(session: AsyncSession) -> IngestMetadata | None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    observability.warm_up()
     engine = get_engine()
     if engine.dialect.name == "sqlite":
         # Postgres is migrated with Alembic (`make migrate`); SQLite dev/test just

@@ -84,13 +84,36 @@ way they are.
 
 ## How to run it
 
-**One command** after cloning (SQLite — no Docker/Postgres needed; this build's own
-Postgres path is fully written but was never run against a live Postgres, since
-Docker Desktop had no working engine in this environment — see `docs/DECISIONS.md`):
+**Primary path: Docker Compose** (Postgres 16 + pgvector 0.8, Redis, and a full
+Langfuse v4 self-host — ClickHouse, MinIO, their own Postgres/Redis). Verified
+end-to-end against a live stack, not just written:
 
 ```bash
-make setup   # pip install, download the real dataset (241MB, once), seed dev.db
+docker compose up -d          # postgres, redis, langfuse-web/worker + their own stack
+pip install -e .
+cp .env.example .env          # then fill in DATABASE_URL/REDIS_URL/LANGFUSE_* -- see below
+alembic -c db/alembic.ini upgrade head   # creates tables, the pgvector extension, the HNSW index
+python -m pipeline.download_real_data    # 241MB, once
+python -m pipeline.run_all               # seeds Postgres -- DATA_SOURCE defaults to "real"
 ```
+
+`.env`'s Postgres/Redis/Langfuse values, matching `docker-compose.yml`'s dev-only
+credentials:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://gaffer:gaffer@localhost:5432/gaffer
+DATABASE_URL_READONLY=postgresql+asyncpg://gaffer_ro:gaffer_ro@localhost:5432/gaffer
+REDIS_URL=redis://localhost:6379/0
+LANGFUSE_PUBLIC_KEY=pk-lf-gaffer-dev-0000000000000000
+LANGFUSE_SECRET_KEY=sk-lf-gaffer-dev-0000000000000000
+LANGFUSE_HOST=http://localhost:3000
+```
+
+(`gaffer_ro` is created by the first migration; the Langfuse keys above are
+auto-provisioned on `langfuse-web`'s first boot via `LANGFUSE_INIT_*` env vars in
+`docker-compose.yml` — no manual sign-up needed. Sign in at
+`http://localhost:3000` with `dev@example.com` / `dev-password-change-me` to
+browse traces yourself.)
 
 Then, in two more terminals:
 
@@ -99,17 +122,23 @@ make api                              # http://localhost:8000
 cd frontend && npm install && npm run dev   # http://localhost:5173, proxies /api to :8000
 ```
 
+**Fallback path: SQLite, no Docker needed** — `make setup` (pip install, download
+the real dataset, seed `dev.db`), then the same `make api` / `npm run dev` above.
+This is what the automated fresh-clone verification in this repo's history
+actually used (Docker wasn't reachable in that sandbox at the time); the Postgres
+path above has since been verified live in the same environment once Docker was
+available — see `docs/DECISIONS.md` "Postgres + pgvector + Langfuse v4, verified
+live" for the real bugs that surfaced only once this path was actually exercised
+end-to-end, and exactly how they were fixed.
+
 **Dev/test mode (synthetic, fictional players)**: set `DATA_SOURCE=synthetic` before
 `python -m pipeline.run_all` — faster (no 241MB download), and what the whole test
-suite runs against. The app refuses to hide this from you: `/health` reports
-`data_source: "synthetic"` and every screen shows a persistent "DEMO DATA" banner
-whenever the seeded database isn't real (`docs/DECISIONS.md` "Synthetic data is no
-longer the silent default"). The API also refuses to start at all against a database
-the pipeline has never been run against, rather than silently serving empty tables.
-
-With a real Postgres available: set `DATABASE_URL` in `.env` (see `.env.example`),
-`make up && make migrate` instead of letting SQLite auto-create tables, then the same
-`make pipeline && make api && make web`.
+suite runs against, on either backend. The app refuses to hide this from you:
+`/health` reports `data_source: "synthetic"` and every screen shows a persistent
+"DEMO DATA" banner whenever the seeded database isn't real (`docs/DECISIONS.md`
+"Synthetic data is no longer the silent default"). The API also refuses to start
+at all against a database the pipeline has never been run against, rather than
+silently serving empty tables.
 
 Tests/evals need the dev+eval extras too: `pip install -e ".[dev,eval]"` (on
 Windows without a C++ build toolchain, `ragas` — one of the `eval` extra's own
@@ -193,14 +222,26 @@ project has no deployment to put real keys into), so tracing never needs a secre
 never blocks anything.
 
 **To view a trace**: set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and
-`LANGFUSE_HOST` in `.env` (self-hosted Langfuse via `docker compose up -d`, or
-[Langfuse Cloud](https://cloud.langfuse.com)'s free tier), then run a normal session
-(`make api` + `make web`, or `make eval`). Every graph node shows up as its own
-`node.<name>` trace in the Langfuse UI, tagged with the game session's `session_id` —
-any LLM generation, retrieval, rerank, or SQL-tool call made while handling that node
-nests underneath it automatically. Running `evals/numeric_eval.py` or
-`evals/faithfulness_eval.py` attaches that sample's score (`numeric_faithfulness_*`,
-`ragas_faithfulness_*`) directly onto the trace its report was narrated in.
+`LANGFUSE_HOST` in `.env` (self-hosted Langfuse via `docker compose up -d` — see
+"How to run it" above for the exact dev keys this `docker-compose.yml` auto-
+provisions, or [Langfuse Cloud](https://cloud.langfuse.com)'s free tier), then run
+a normal session (`make api` + `make web`, or `make eval`). Every graph node shows
+up as its own `node.<name>` trace in the Langfuse UI, tagged with the game
+session's `session_id` — any LLM generation, retrieval, rerank, or SQL-tool call
+made while handling that node nests underneath it automatically. Running
+`evals/numeric_eval.py` or `evals/faithfulness_eval.py` attaches that sample's
+score (`numeric_faithfulness_*`, `ragas_faithfulness_*`) directly onto the trace
+its report was narrated in.
+
+**Verified against a real, running Langfuse instance** (not just a fake client in
+tests): `node.draw`, `node.validate`, `node.analyse`, `node.narrate_report`,
+`node.opponent_counter`, `node.simulate`, `node.narrate_match`, `node.chat` all
+appeared as real traces from a real Playwright session, with `llm.narrate`
+(`GENERATION`) and `rag.retrieve` (`RETRIEVER`) nested underneath the nodes that
+triggered them — see `docs/DECISIONS.md` for the two real bugs this surfaced
+(`observability.py` was never actually passing its settings to the SDK, and the
+first trace after a cold server start added enough latency to flake a 5s-timeout
+Playwright assertion) and how they were fixed.
 
 ## Key design decisions (full detail in [`docs/DECISIONS.md`](docs/DECISIONS.md))
 
