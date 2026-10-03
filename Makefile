@@ -1,11 +1,16 @@
 .PHONY: setup up down migrate pipeline test eval eval-retrieval eval-embeddings eval-faithfulness eval-numeric eval-live train-rating-v2 api web lint typecheck
 
-# The one command a fresh clone needs: installs the backend, downloads the real
-# dataset (241MB, once), and seeds dev.db (SQLite -- no Docker/Postgres needed).
-# Then `make api` + `cd frontend && npm install && npm run dev` in two more
-# terminals, per README.md "How to run it".
+# The one command a fresh clone needs to get the app itself running: installs
+# just the base package (not the dev/eval extras -- running the app needs
+# neither), downloads the real dataset (241MB, once), and seeds dev.db (SQLite
+# -- no Docker/Postgres needed). Then `make api` + `cd frontend && npm install
+# && npm run dev` in two more terminals, per README.md "How to run it". Testing
+# or evaluating needs `pip install -e ".[dev,eval]"` separately (README.md
+# "How to run it" / `docs/DECISIONS.md` "RAGAS could not be installed..." --
+# the `eval` extra's `ragas` dependency needs a C++ toolchain to build on
+# Windows, which `setup` deliberately avoids depending on).
 setup:
-	pip install -e ".[dev,eval]"
+	pip install -e .
 	python -m pipeline.download_real_data
 	python -m pipeline.run_all
 

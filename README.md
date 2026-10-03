@@ -111,8 +111,13 @@ With a real Postgres available: set `DATABASE_URL` in `.env` (see `.env.example`
 `make up && make migrate` instead of letting SQLite auto-create tables, then the same
 `make pipeline && make api && make web`.
 
-Tests: `make test` (149 passing — see below). Lint/typecheck: `make lint && make
-typecheck`. Frontend typecheck: `cd frontend && npx tsc --noEmit`.
+Tests/evals need the dev+eval extras too: `pip install -e ".[dev,eval]"` (on
+Windows without a C++ build toolchain, `ragas` — one of the `eval` extra's own
+dependencies — fails to build; see `docs/DECISIONS.md` "RAGAS could not be
+installed in this environment." `make setup` above deliberately skips this
+extra so getting the app running never depends on it). Tests: `make test` (149
+passing — see below). Lint/typecheck: `make lint && make typecheck`. Frontend
+typecheck: `cd frontend && npx tsc --noEmit`.
 
 ## Game rules
 
