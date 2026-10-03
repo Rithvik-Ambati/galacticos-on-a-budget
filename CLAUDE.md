@@ -57,3 +57,4 @@ make web         # run frontend
 * At the end of each task: update `docs/PROGRESS.md` (what was built, how to verify, known issues) and add any design decision with its reason to `docs/DECISIONS.md`.
 * If the spec is ambiguous or data does not match assumptions, stop and ask rather than guessing. Report data-quality findings with counts.
 * Prefer small, reviewable commits with clear messages (`feat(engine): add swap optimizer`).
+* Never add `Co-Authored-By: Claude`, `Claude-Session:`, or "Generated with [Claude Code]" lines to any commit message or pull request in this repo. The repo-local git identity is already set to the project owner; a `.git/hooks/commit-msg` hook also strips any such line that slips through.

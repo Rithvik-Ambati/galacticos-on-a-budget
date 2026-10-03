@@ -57,3 +57,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# per-machine Claude Code settings (e.g. commit/PR attribution overrides) --
+# .claude/launch.json (dev-server preview config) stays tracked
+.claude/settings.local.json
