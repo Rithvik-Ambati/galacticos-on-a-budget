@@ -14,6 +14,9 @@ __pycache__/
 # data dumps, raw and processed -- pipeline/download_real_data.py fetches these,
 # they're never committed (README documents this)
 dev.db
+dev.db-journal
+dev.db-wal
+dev.db-shm
 data/
 data_raw/
 

@@ -109,23 +109,33 @@ def _load_competitions(data_dir: str) -> tuple[dict[str, str], dict[str, str]]:
     return countries, names
 
 
-def _load_games_team_sets(data_dir: str) -> tuple[set[str], set[str], set[str], set[str]]:
-    """(wc2026_game_ids, wc2026_team_ids, ucl2025_26_game_ids, ucl2025_26_club_ids)."""
+def _load_games_team_sets(
+    data_dir: str,
+) -> tuple[set[str], set[str], set[str], set[str], dict[str, str]]:
+    """(wc2026_game_ids, wc2026_team_ids, ucl2025_26_game_ids, ucl2025_26_club_ids,
+    wc2026_team_names). The last is games.csv.gz's own `home_club_name`/
+    `away_club_name` for each WC2026 team_id -- real, not guessed, and the only
+    source of a name for a team that played real WC2026 matches but has no row
+    in national_teams.csv.gz (that reference table doesn't cover every FIFA
+    member federation; see the fallback in generate())."""
     wc_game_ids: set[str] = set()
     wc_team_ids: set[str] = set()
     ucl_game_ids: set[str] = set()
     ucl_club_ids: set[str] = set()
+    wc_team_names: dict[str, str] = {}
     with _open(data_dir, "games.csv.gz") as f:
         for row in csv.DictReader(f):
             if row["competition_id"] == "FIWC" and row["season"] == "2025":
                 wc_game_ids.add(row["game_id"])
                 wc_team_ids.add(row["home_club_id"])
                 wc_team_ids.add(row["away_club_id"])
+                wc_team_names[row["home_club_id"]] = row["home_club_name"]
+                wc_team_names[row["away_club_id"]] = row["away_club_name"]
             elif row["competition_id"] == "CL" and row["season"] == "2025":
                 ucl_game_ids.add(row["game_id"])
                 ucl_club_ids.add(row["home_club_id"])
                 ucl_club_ids.add(row["away_club_id"])
-    return wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids
+    return wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names
 
 
 def _load_starting_lineup_frequency(
@@ -195,7 +205,7 @@ def generate(seed: int | None = None, data_dir: str = DEFAULT_DATA_DIR) -> Synth
         )
 
     competition_countries, competition_names = _load_competitions(data_dir)
-    wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids = _load_games_team_sets(data_dir)
+    wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names = _load_games_team_sets(data_dir)
     wc_squads_by_team = _load_lineup_squads(data_dir, wc_game_ids)
     wc_squad_player_ids: set[str] = set().union(*wc_squads_by_team.values()) if wc_squads_by_team else set()
     ucl_lineup_squads_by_club = _load_lineup_squads(data_dir, ucl_game_ids)
@@ -209,6 +219,18 @@ def generate(seed: int | None = None, data_dir: str = DEFAULT_DATA_DIR) -> Synth
         for row in csv.DictReader(f):
             if row["national_team_id"] in wc_team_ids:
                 national_team_rows[row["national_team_id"]] = row
+
+    # national_teams.csv doesn't cover every FIFA member federation (only 124 rows
+    # total) -- 5 real WC2026 teams that definitely played real matches (confirmed
+    # via games.csv.gz's own competition_id/season filter above) have no row there:
+    # Haiti, Cape Verde, Ivory Coast, Curaçao, DR Congo. Their real name comes
+    # straight from games.csv.gz's own home_club_name/away_club_name instead --
+    # the same file that already proved they're real WC2026 participants, not a
+    # guess standing in for a missing one.
+    for tid in wc_team_ids:
+        if tid not in national_team_rows and tid in wc_team_names:
+            name = wc_team_names[tid]
+            national_team_rows[tid] = {"name": name, "country_name": name}
 
     # players.csv: the full candidate pool. Every selected player keeps whatever real
     # club they're actually at (not just the 36 UCL ones) -- a Bundesliga centre-back

@@ -302,10 +302,13 @@ WC-squad-field finding):
    `players.csv` itself has incomplete profiles for them. Fixed the same way the
    WC2026 squads were fixed in Phase 1 — derive squad membership from real 2025/26
    UCL match lineups (`game_lineups.csv`) too, unioned with the `current_club_id`
-   path. Final squads: 43/48 WC2026 teams at 24-26 real players each (5 teams dropped
-   entirely — their ids never appear in `national_teams.csv`, so no display name
-   exists for them; honest to drop rather than guess one), all 36 UCL clubs at
-   15-50 real players each.
+   path. Final squads (at the time): 43/48 WC2026 teams at 24-26 real players each
+   (5 teams dropped entirely — their ids never appear in `national_teams.csv`, so no
+   display name existed for them; honest to drop rather than guess one), all 36 UCL
+   clubs at 15-50 real players each. **Later fixed** (see the dedicated section
+   below, found when the project owner asked which 5 teams were missing): those 5
+   teams' real names come from `games.csv.gz` instead, bringing the pool to a true
+   48/48.
 
 `db/models.py`: widened `Player.nationality` / `Club.country` / `NationalTeam.country`
 from `String(3)` (ISO codes, synthetic-only) to `String(64)` to hold real full country
@@ -315,8 +318,9 @@ full country names for the big five leagues, since `club["country"]` can be eith
 depending on `DATA_SOURCE`.
 
 Verified end-to-end against a fresh SQLite db (`DATA_SOURCE=real python -m
-pipeline.run_all`, seed 42): 4,755 players, 490 clubs, 43 national teams, 2,466 squad
-rows, 3,842/3,842 matched by `id_resolution` (0 unresolved — expected, since there's
+pipeline.run_all`, seed 42): 4,755 players, 490 clubs, 43 national teams (later
+48 — see "5 missing WC2026 teams found and fixed" below), 2,466 squad rows (later
+2,595), 3,842/3,842 matched by `id_resolution` (0 unresolved — expected, since there's
 only one real source feeding both the "TM" and "Understat" sides here, so every match
 is `dob_club_exact`/`dob_club_fuzzy` at score 1.0, not the deliberate-disagreement
 case Phase 1's synthetic two-source setup exercises), pricing MAE ~€3.33M (40.7% of
@@ -489,23 +493,25 @@ every club any real player happens to play for) instead of the 36 clubs that
 actually have a squad, giving roughly a 93% chance of drawing a 0-player opponent
 in UCL mode. Fixed by querying `Squad.team_id` (filtered by `tournament`) directly.
 
-**Audit, real data, both modes**:
+**Audit, real data, both modes** (updated after the "5 missing WC2026 teams" fix
+later in this doc — originally measured at 43/43, 3 fallback teams, 4 fills before
+that fix):
 
 | Mode | Fieldable (of real candidates) | Excluded | Needed >=1 fallback fill | Total fills |
 |---|---|---|---|---|
-| WC2026 (national teams) | 43 / 43 | 0 | 3 | 4 |
+| WC2026 (national teams) | 48 / 48 | 0 | 4 | 5 |
 | UCL2025-26 (clubs) | 36 / 36 | 0 | 2 | 2 |
 
-(5 of the 48 real WC2026 teams and ~454 of the ~490 clubs `real_source.py`
-references have no squad at all in this dataset — never real candidates, not a
-Part 2b exclusion; see Phase 8/6c Part 2a.)
+(~454 of the ~490 clubs `real_source.py` references have no squad at all in this
+dataset — never real candidates, not a Part 2b exclusion; see Phase 8/6c Part 2a.)
 
 **Tests**: `tests/test_opponent_lineup.py` — 3 unit tests (fallback chain fires,
 no fallback needed when a squad has full depth, returns `None` when genuinely too
 thin) plus the requested property test: for every team in both modes the
 synthetic seed makes fieldable, the built XI has exactly the 11 formation slots,
 all distinct real squad members. 105 backend tests passing, ruff/mypy clean.
-No dedicated Playwright check was added for the (rare -- 3/43, 2/36) scouting-page
+No dedicated Playwright check was added for the (rare -- 4/48, 2/36 after the "5
+missing WC2026 teams" fix later in this doc; 3/43 at the time) scouting-page
 out-of-position banner specifically; the existing Batch A/B Playwright suite
 already exercises `draw()`/Scouting repeatedly and would catch a crash, but
 doesn't force the banner's specific content to appear.
@@ -526,11 +532,13 @@ of the hardcoded placeholder it shipped with in Part 2b. Same XI object the
 rating/counter/simulation engines already consume -- no second lineup computed
 anywhere.
 
-**Audit, real data, both modes** (re-ran `pipeline.run_all` with `DATA_SOURCE=real`):
+**Audit, real data, both modes** (re-ran `pipeline.run_all` with `DATA_SOURCE=real`;
+updated after the "5 missing WC2026 teams" fix later in this doc — originally
+measured at 43/37/6 before that fix):
 
 | Mode | Fieldable | `"real"` | `"estimated"` |
 |---|---|---|---|
-| WC2026 (national teams) | 43 | 37 | 6 |
+| WC2026 (national teams) | 48 | 42 | 6 |
 | UCL2025-26 (clubs) | 36 | 35 | 1 |
 
 **Tests**: 6 new cases in `tests/test_opponent_lineup.py` -- frequency outranks
@@ -805,3 +813,64 @@ narrow, mixed result into a clear win -- out of scope for "build it, backtest
 it, report honestly," and this session's read of the instruction is that a
 mixed result should be reported as what it is, not optimized against after the
 fact to manufacture a "win."
+
+## Part 7 -- rename to Gaffer, full README rewrite
+
+Full detail in `docs/DECISIONS.md`'s "CI's E2E job runs `vite dev`" entry and
+this project's own commit history -- the rename itself needed no design
+decision worth its own DECISIONS.md entry, just a mechanical sweep.
+
+Renamed everywhere a human would see it or a build tool would read it:
+`pyproject.toml`/`frontend/package.json` package names, the FastAPI app title,
+the frontend `<title>`/Welcome screen/share-card text/download filenames,
+Docker service credentials, the Postgres readonly role in the (never-run)
+migration, assorted docstrings. `docs/PHASE_PROMPTS.md` deliberately left
+alone -- it's a dated log of the literal prompts used in earlier phases, not a
+living reference that should retroactively look like it always said "Gaffer."
+
+`README.md` fully rewritten: title ("Gaffer -- Galácticos on a Budget"),
+tagline, screenshot placeholders, a mermaid architecture diagram, a tech-stack
+table with one-line justifications per choice, a one-command `make setup`
+fresh-clone path (new Makefile target -- deliberately installs just the base
+package, not the `dev`/`eval` extras, since running the app itself never
+needed `ragas`'s C++ build requirement), the game-rules table lifted from
+`docs/DESIGN.md`, an evaluation-results table with only real measured numbers
+(explicit "TODO: pending ..." markers for anything that needs a filled golden
+set or a live LLM run -- never an estimate), and an explicit out-of-scope list
+(auth, deployment, share links, multiplayer, live data updates).
+
+**Verified, not just written**: cloned the repo fresh into a separate folder
+and followed `README.md`'s own instructions exactly. Found and fixed one real
+problem this way -- `pip install -e ".[dev,eval]"` as the primary setup step
+fails on a C++-toolchain-less Windows machine (the same `ragas`/`scikit-network`
+issue `docs/DECISIONS.md` already documents for the eval suite), which would
+have blocked anyone just trying to get the *app* running. Fixed by having
+`make setup` install only the base package; `dev`/`eval` are now a separate,
+clearly-labelled step for testing/evals specifically. Also live-verified the
+rename end-to-end with the Playwright batch A/B suite against a real-seeded
+DB (title, share-card text, and the downloaded PNG's filename all correctly
+say "Gaffer"), and confirmed `/health` boots and serves real data from the
+fresh clone after `make setup` + `uvicorn`.
+
+## 5 missing WC2026 teams found and fixed
+
+Full detail in `docs/DECISIONS.md` "5 real WC2026 teams were missing from the
+drawable pool." Prompted by the project owner noticing the drawable pool was
+43/48, not the real 48, and asking which 5 teams and why.
+
+Investigated rather than guessed: cross-referenced `games.csv.gz`'s real
+WC2026 match participants against `national_teams.csv.gz`'s coverage and found
+the gap was exactly Haiti, Cape Verde, Ivory Coast, Curaçao, and DR Congo --
+all 5 confirmed real WC2026 participants with full real squads already sitting
+in `game_lineups.csv.gz`, just missing a row in the 124-row
+`national_teams.csv.gz` reference table used for display names.
+
+Fixed in `pipeline/real_source.py`: `_load_games_team_sets` now also captures
+each WC2026 team's real name from `games.csv.gz`'s own
+`home_club_name`/`away_club_name`, used as a fallback only for a team_id
+`national_teams.csv.gz` has no row for -- no guessed names.
+
+**Re-audited both earlier real-data numbers in this doc and in
+`docs/DECISIONS.md`** (Part 2b's fallback audit, Part 2c's real-vs-estimated
+audit) -- both now reflect 48/48 WC2026 teams, not 43/48. Full backend suite
+re-run: 149 passing (`tests/test_real_source.py`, new, +1), ruff/mypy clean.

@@ -391,13 +391,47 @@ bug, not something this change introduced. Fixed by querying `Squad.team_id`
 (filtered by `tournament`) directly instead of `Club`/`NationalTeam`, which is both
 the correctness fix and a performance one (36 squad loads instead of 490).
 
-**Audit numbers, real data** (`docs/PROGRESS.md` Part 2b): WC2026 — 43/43 teams
-fieldable, 0 excluded, 3 needed >=1 out-of-position fill (4 fills total).
-UCL2025-26 — 36/36 real clubs fieldable, 0 excluded, 2 needed >=1 out-of-position
-fill (2 fills total). (5 of the 48 real WC2026 teams and ~454 of ~490 referenced
-clubs have no `national_teams.csv`/`Squad` row at all in this dataset and were
-never candidates in the first place — see `docs/PROGRESS.md` Phase 8/6c, not a
-Part 2b exclusion.)
+**Audit numbers, real data** (`docs/PROGRESS.md` Part 2b; updated after the
+"5 missing WC2026 teams" fix below — originally measured at 43/48 before that
+fix, now 48/48): WC2026 — 48/48 teams fieldable, 0 excluded, 4 needed >=1
+out-of-position fill (5 fills total). UCL2025-26 — 36/36 real clubs fieldable,
+0 excluded, 2 needed >=1 out-of-position fill (2 fills total). (~454 of ~490
+referenced clubs have no `Squad` row at all in this dataset and were never UCL
+candidates in the first place — see `docs/PROGRESS.md` Phase 8/6c, not a Part
+2b exclusion.)
+
+## 5 real WC2026 teams were missing from the drawable pool
+
+**What**: Haiti, Cape Verde, Ivory Coast, Curaçao and DR Congo — all 5 confirmed
+real WC2026 participants in `games.csv.gz` with full real 25-26-player squads
+already sitting in `game_lineups.csv.gz` — were silently excluded from the
+drawable pool entirely (43/48, not 48/48), discovered when the project owner
+asked which 5 teams were missing and asked me to investigate.
+
+**Why**: `pipeline/real_source.py::generate()` only built a `NationalTeam`
+entry (and, through it, a `Squad`) for a WC2026 team_id that *also* had a row
+in `national_teams.csv.gz` — the dataset's reference table for team display
+names. That table only has 124 rows total and doesn't cover every FIFA member
+federation; these 5 teams simply aren't in it, even though they unambiguously
+played real, recorded WC2026 matches.
+
+**Fix**: `_load_games_team_sets` now also captures each WC2026 team_id's real
+name straight from `games.csv.gz`'s own `home_club_name`/`away_club_name`
+columns — the same file that already proves the team is a real WC2026
+participant — and `generate()` falls back to that name only for a team_id
+`national_teams.csv.gz` has no row for. No guessed names, no fabricated data;
+just a second real source for the one field (`name`) that was missing.
+Everything else (the real squad, from `game_lineups.csv.gz`) was already being
+built correctly and simply had nowhere to attach to.
+
+**Result**: WC2026 drawable pool is now a genuine 48/48, all with full real
+squads (24-26 players; Haiti landed at 25). One of the 5 (Haiti) needed an
+out-of-position fallback fill, consistent with Part 2b's existing mechanism —
+nothing else in the fallback/fieldability logic needed to change.
+
+**Tests**: `tests/test_real_source.py` (new) — `_load_games_team_sets` captures
+the right WC2026 team name per team_id from a tiny fixture `games.csv.gz`, and
+correctly ignores a UCL game's team names in the same file.
 
 **Tests**: `tests/test_opponent_lineup.py` — unit tests for the fallback chain, the
 all-native-positions (no fallback) case, and the genuinely-too-thin-to-field-11
@@ -444,11 +478,12 @@ intended, documented behaviour (`docs/DECISIONS.md` "Synthetic data is no longer
 the silent default"), not a gap.
 
 **Audit, real data, both modes** (re-ran `pipeline.run_all` with `DATA_SOURCE=real`
-and checked every fieldable team from Part 2b's own audit):
+and checked every fieldable team from Part 2b's own audit; updated after the "5
+missing WC2026 teams" fix — originally measured at 43/37/6 before that fix):
 
 | Mode | Fieldable | `lineup_source="real"` | `lineup_source="estimated"` |
 |---|---|---|---|
-| WC2026 (national teams) | 43 | 37 | 6 |
+| WC2026 (national teams) | 48 | 42 | 6 |
 | UCL2025-26 (clubs) | 36 | 35 | 1 |
 
 The 6 WC2026 "estimated" teams and 1 UCL2025-26 "estimated" team are squads whose

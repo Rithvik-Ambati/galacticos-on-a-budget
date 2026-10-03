@@ -157,7 +157,7 @@ executed, it says so plainly instead of guessing.
 | Pricing model MAE (real data, held out) | **€3.17M**, 35.7% of mean real market value | documented |
 | Ability-score distribution (real data) | **4.1–96.5** (mean 49.6) — not collapsed to a constant | — (sanity check) |
 | Budget sanity check (real data, €1B) | A full top-ability XI of the 95 "elite" players **does fit** under €1B; ~20 elite players are affordable alongside 8 median starters | documented |
-| Real-data coverage | 4,755 players, 490 clubs, 43 national teams, 2,466 squad rows | — |
+| Real-data coverage | 4,755 players, 490 clubs, 48 national teams, 2,595 squad rows | — |
 
 Pricing MAE and the ability-score range are measured against the real Transfermarkt
 dataset (`DATA_SOURCE=real`, the default); the budget sanity check updated from an
