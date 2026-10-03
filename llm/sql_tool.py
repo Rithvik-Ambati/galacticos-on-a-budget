@@ -1,7 +1,7 @@
 """Guarded text-to-SQL. CLAUDE.md rule 5: the `readonly` DB role, a table allowlist,
 a SELECT-only parser check, a statement timeout, and a row limit.
 
-In production this runs against DATABASE_URL_READONLY (the Postgres `lineuplab_ro`
+In production this runs against DATABASE_URL_READONLY (the Postgres `gaffer_ro`
 role the Phase 1 migration creates, which itself has `statement_timeout = '2s'` set at
 the role level -- see db/migrations/versions/0001_initial_schema.py). There is no
 per-role privilege system in SQLite, so in this dev/test environment the guardrails

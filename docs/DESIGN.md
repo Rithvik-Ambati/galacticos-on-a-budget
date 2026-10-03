@@ -1,6 +1,6 @@
-# Lineup Lab — System Design Document
+# Gaffer — System Design Document
 
-> Build an XI to beat an assigned real-world opponent. Get coach-style feedback on weaknesses, rule-respecting swap suggestions, an overall rating, an opponent that fights back, and a simulated match.
+> Build an XI to beat a real opponent. Get coached, get countered, play it out.
 
 **Core principle: the engine decides, the LLM explains.** Every number shown to the user is produced by deterministic, tested code or a validated model. The LLM only narrates engine output, answers follow-up questions using retrieved context, and translates questions into read-only SQL.
 
@@ -238,7 +238,7 @@ All request/response bodies are Pydantic models; errors use a consistent problem
 ## 13. Repository structure
 
 ```
-lineup-lab/
+gaffer/
 ├── CLAUDE.md
 ├── docs/DESIGN.md, docs/PROGRESS.md, docs/DECISIONS.md
 ├── docker-compose.yml, .env.example, Makefile

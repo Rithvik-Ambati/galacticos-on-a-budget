@@ -271,7 +271,7 @@ set of reusable classes (`.card`, `.pill`, `.pitch`, `.player-row`, ...), not
 Tailwind, even though CLAUDE.md's stack line names Tailwind.
 
 **Why**: time budget. The design tokens (dark background, pitch green, gold, red --
-matching the Lineup Lab mockup built earlier in this project) and the component
+matching the Gaffer mockup built earlier in this project) and the component
 shapes were already fully decided; reaching for Tailwind's utility classes would
 have meant re-deriving the same values through a different syntax for no behavioural
 difference. If this becomes a real multi-contributor frontend, Tailwind's value is

@@ -2,15 +2,15 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: lineuplab
-      POSTGRES_PASSWORD: lineuplab
-      POSTGRES_DB: lineuplab
+      POSTGRES_USER: gaffer
+      POSTGRES_PASSWORD: gaffer
+      POSTGRES_DB: gaffer
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lineuplab"]
+      test: ["CMD-SHELL", "pg_isready -U gaffer"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -25,7 +25,7 @@ services:
     depends_on:
       - postgres
     environment:
-      DATABASE_URL: postgresql://lineuplab:lineuplab@postgres:5432/lineuplab
+      DATABASE_URL: postgresql://gaffer:gaffer@postgres:5432/gaffer
       NEXTAUTH_SECRET: dev-secret-change-me
       SALT: dev-salt-change-me
       NEXTAUTH_URL: http://localhost:3000

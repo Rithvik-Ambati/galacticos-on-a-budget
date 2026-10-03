@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="Lineup Lab API", lifespan=lifespan)
+app = FastAPI(title="Gaffer API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

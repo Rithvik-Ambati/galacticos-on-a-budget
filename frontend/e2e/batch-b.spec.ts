@@ -156,7 +156,7 @@ test("B4: copy result and download image both work from the match report", async
   await page.getByTestId("copy-result-button").click();
   await expect(page.getByTestId("copy-result-button")).toHaveText(/Copied/);
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-  expect(clipboardText).toContain("Lineup Lab");
+  expect(clipboardText).toContain("Gaffer");
   expect(clipboardText).toMatch(/You \d+ - \d+/);
   expect(clipboardText).toContain("Rating:");
 
@@ -164,5 +164,5 @@ test("B4: copy result and download image both work from the match report", async
     page.waitForEvent("download"),
     page.getByTestId("download-image-button").click(),
   ]);
-  expect(download.suggestedFilename()).toMatch(/^lineup-lab-vs-.*\.png$/);
+  expect(download.suggestedFilename()).toMatch(/^gaffer-vs-.*\.png$/);
 });

@@ -1,4 +1,4 @@
-"""Hand-built demo data: the same Brazil scenario from the Lineup Lab mockup.
+"""Hand-built demo data: the same Brazil scenario from the Gaffer mockup.
 
 Used by `python -m engine.analyse --demo`, and by tests so "does the engine find the
 weakness I planted" has one shared, readable source of truth instead of being

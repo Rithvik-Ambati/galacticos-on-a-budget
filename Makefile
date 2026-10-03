@@ -1,4 +1,13 @@
-.PHONY: up down migrate pipeline test eval eval-retrieval eval-embeddings eval-faithfulness eval-numeric eval-live train-rating-v2 api web lint typecheck
+.PHONY: setup up down migrate pipeline test eval eval-retrieval eval-embeddings eval-faithfulness eval-numeric eval-live train-rating-v2 api web lint typecheck
+
+# The one command a fresh clone needs: installs the backend, downloads the real
+# dataset (241MB, once), and seeds dev.db (SQLite -- no Docker/Postgres needed).
+# Then `make api` + `cd frontend && npm install && npm run dev` in two more
+# terminals, per README.md "How to run it".
+setup:
+	pip install -e ".[dev,eval]"
+	python -m pipeline.download_real_data
+	python -m pipeline.run_all
 
 up:
 	docker compose up -d

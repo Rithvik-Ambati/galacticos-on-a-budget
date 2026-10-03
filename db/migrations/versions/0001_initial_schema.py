@@ -39,27 +39,27 @@ def upgrade() -> None:
             """
             DO $$
             BEGIN
-                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'lineuplab_ro') THEN
-                    CREATE ROLE lineuplab_ro LOGIN PASSWORD 'lineuplab_ro';
+                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'gaffer_ro') THEN
+                    CREATE ROLE gaffer_ro LOGIN PASSWORD 'gaffer_ro';
                 END IF;
             END
             $$
             """
         )
-        op.execute("GRANT CONNECT ON DATABASE lineuplab TO lineuplab_ro")
-        op.execute("GRANT USAGE ON SCHEMA public TO lineuplab_ro")
-        op.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO lineuplab_ro")
+        op.execute("GRANT CONNECT ON DATABASE gaffer TO gaffer_ro")
+        op.execute("GRANT USAGE ON SCHEMA public TO gaffer_ro")
+        op.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO gaffer_ro")
         op.execute(
-            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO lineuplab_ro"
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO gaffer_ro"
         )
-        op.execute("ALTER ROLE lineuplab_ro SET statement_timeout = '2s'")
+        op.execute("ALTER ROLE gaffer_ro SET statement_timeout = '2s'")
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     Base.metadata.drop_all(bind=bind)
     if bind.dialect.name == "postgresql":
-        op.execute("DROP ROLE IF EXISTS lineuplab_ro")
+        op.execute("DROP ROLE IF EXISTS gaffer_ro")
 
 
 # Keep the import used (ruff) and document intent: table shapes come straight

@@ -74,7 +74,7 @@ different-league players price sensibly relative to their ability score.
 Built: `engine/rules.py`, `engine/team_profile.py`, `engine/rating.py` (v1 + the
 `RatingModel` interface), `engine/matchups.py`, `engine/weaknesses.py` (full 9-rule
 catalogue from DESIGN.md 7.4), `engine/swaps.py`, `engine/optimizer.py` (OR-Tools
-CP-SAT), `engine/demo_fixtures.py` (the Brazil scenario from the Lineup Lab mockup —
+CP-SAT), `engine/demo_fixtures.py` (the Brazil scenario from the Gaffer mockup —
 `strong` / `weak_leftback` / `all_attack` 4-3-3 lineups), `engine/analyse.py` (CLI).
 
 **Analysis JSON schema**: `engine.schemas.LineupAnalysis` — session_id, formation,

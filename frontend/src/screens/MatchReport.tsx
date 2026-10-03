@@ -62,7 +62,7 @@ export function MatchReport({
     const canvas = canvasRef.current;
     if (!canvas) return;
     drawShareImage(canvas, opponentName, simulation, analysis, manOfTheMatch);
-    downloadCanvasAsPng(canvas, `lineup-lab-vs-${opponentName.toLowerCase().replace(/\s+/g, "-")}.png`);
+    downloadCanvasAsPng(canvas, `gaffer-vs-${opponentName.toLowerCase().replace(/\s+/g, "-")}.png`);
   }
 
   async function send(question: string) {

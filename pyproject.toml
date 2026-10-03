@@ -1,7 +1,7 @@
 [project]
-name = "lineup-lab"
+name = "gaffer"
 version = "0.1.0"
-description = "Build an XI to beat an assigned real-world opponent."
+description = "Build an XI to beat a real opponent. Get coached, get countered, play it out."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",

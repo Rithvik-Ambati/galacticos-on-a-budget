@@ -12,9 +12,9 @@ export function Welcome({ onStart, busy }: Props) {
     <div className="screen" style={{ alignItems: "center", justifyContent: "center", textAlign: "center", gap: 32 }}>
       <div className="col" style={{ alignItems: "center" }}>
         <div className="green" style={{ fontWeight: 700, fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>
-          Build. Analyse. Beat the draw.
+          Build an XI to beat a real opponent. Get coached, get countered, play it out.
         </div>
-        <h1 style={{ fontSize: 72 }}>Lineup Lab</h1>
+        <h1 style={{ fontSize: 72 }}>Gaffer</h1>
         <p className="text-dim" style={{ maxWidth: 520 }}>
           You're assigned a real opponent. Build an XI from anyone else on earth, within budget. The coach tells you
           where it breaks — then the opponent fights back.

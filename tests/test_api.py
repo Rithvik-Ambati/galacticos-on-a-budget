@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import tempfile
 
-_TEST_DB_PATH = os.path.join(tempfile.mkdtemp(prefix="lineuplab_api_test_"), "test.db")
+_TEST_DB_PATH = os.path.join(tempfile.mkdtemp(prefix="gaffer_api_test_"), "test.db")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
 os.environ["LLM_PROVIDER"] = "stub"
 # DATA_SOURCE now defaults to "real" (docs/DECISIONS.md "Synthetic data is no longer

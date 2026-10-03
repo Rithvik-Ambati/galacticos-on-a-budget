@@ -12,7 +12,7 @@ export function buildShareText(
 ): string {
   const [us, them] = simulation.narrative_score;
   const lines = [
-    "Lineup Lab — Match Result",
+    "Gaffer — Match Result",
     `You ${us} - ${them} ${opponentName}`,
     `Rating: ${analysis.rating.overall.toFixed(1)}/100`,
   ];
@@ -44,7 +44,7 @@ export function drawShareImage(
 
   ctx.fillStyle = "#3ddc84";
   ctx.font = "bold 16px Arial, sans-serif";
-  ctx.fillText("LINEUP LAB · MATCH RESULT", 40, 50);
+  ctx.fillText("GAFFER · MATCH RESULT", 40, 50);
 
   ctx.fillStyle = "#f2f5f7";
   ctx.font = "bold 64px Arial, sans-serif";

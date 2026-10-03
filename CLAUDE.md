@@ -1,4 +1,4 @@
-# CLAUDE.md — Lineup Lab
+# CLAUDE.md — Gaffer
 
 ## What this project is
 A football game: the user is assigned a real opponent (World Cup 2026 national squad or a UCL club squad), builds an XI from every other player in the world within €1B (raised from the original €500M) and max 3 players per nationality, and receives coach-style feedback (rating, weaknesses, swaps), an opponent counter-move, and a simulated match. Full spec: `docs/DESIGN.md`. Read it before starting any phase.
