@@ -794,3 +794,79 @@ initially failed because Next.js's standalone server binds to `$HOSTNAME`
 when set (Docker defaults this to the container id, which resolves to the
 container's own IP, not "every interface") -- fixed with an explicit
 `HOSTNAME=0.0.0.0` override.
+
+## Season stat window shrunk from 440 to 365 days; ability score gets minutes shrinkage and position recalibration (Part 2 Step A/B)
+
+**What (Step A, diagnosis)**: `pipeline/real_source.py::_aggregate_real_stats` summed
+`goals`/`assists`/`minutes` from `appearances.csv.gz` across every row in a 440-day
+window with no season boundary check. Investigated after the project owner noticed
+Harry Kane showing 68 goals in a single "season." Broken down against the raw rows:
+68 = 39 (Bundesliga) + 15 (Champions League) + 7 (DFB-Pokal) + 3 (Club World Cup) +
+3 (international caps) + 1 (Supercup), and the date range in that window
+(2025-04-16 to 2026-06-27) spans parts of two league seasons, not one. Same pattern
+confirmed across all top-20 scorers (every one spread 3-6 competitions) and for
+assists (Olise: 41 reported vs. 26 in Bundesliga alone).
+
+**What (Step B, fix)**: three changes, each per the project owner's explicit choice
+after being shown the diagnosis and alternatives:
+1. `APPEARANCE_LOOKBACK_DAYS` 440 -> 365 (`pipeline/real_source.py`). The project
+   owner chose to keep summing across every competition a player appeared in
+   (league + cup + continental + international caps) rather than restricting to one
+   competition -- that's a deliberate design choice now documented in the module's
+   own docstring, not a bug. Confirmed empirically: at 365 days Kane's total drops
+   from 68 to 63 (the 5-goal difference being exactly the tail of the *previous*
+   season that the 440-day window double-counted).
+2. Minutes shrinkage (`config.game.ABILITY_MINUTES_SHRINKAGE_K = 900`,
+   `pipeline/features.py::_minutes_shrinkage_weight`): a full-coverage player's
+   percentile-ranked composite is pulled toward 50.0 by weight
+   `minutes/(minutes+900)`. Found concretely before this existed: Marcelino Núñez
+   reached `ability_score=74.4` off 90 minutes -- the existing `confidence` field
+   flagged this (0.75) but nothing downstream ever used it to discount the number.
+3. Position recalibration (`pipeline/features.py::compute_features`): the weighted
+   sum of per-metric percentiles ("the composite") is now itself re-percentile-ranked
+   within its position group before becoming `ability_score`, instead of being used
+   directly. The per-position `ABILITY_WEIGHTS` formulas mix a different number of,
+   and differently-correlated, components (GK: 3 mutually-reinforcing defensive
+   metrics; FW: 4 metrics a single attacking profile rarely maxes simultaneously),
+   so the raw composite's distribution shape differs by position even though each
+   component is individually a 0-100 percentile. Found concretely before this fix:
+   GK and DF cleared `ability_score>=90` at up to 4.7x FW's per-capita rate despite
+   every group's mean already being ~49.6-49.8 by construction; Robin Risser (GK,
+   0 goals, 1 assist) ranked above Ousmane Dembélé and a 68-goal Harry Kane.
+
+**Measured effect, real data, before vs after** (full tables in the session
+transcript): top 20 overall was GK/DF-dominated (14 of 20); now spans all four
+groups (4-7 each). No sub-450-minute player in the top 100 (was 1, now 0). Cross-
+position spread of `ability_score>=90` is noisy at that literal cutoff (4.3x, small
+counts at an extreme tail now that the ceiling itself dropped from 96.5 to 91.3) but
+1.3x-1.6x at >=85/>=80. Kane: 63 goals, matching the raw 365-day window exactly.
+
+**Downstream consequence this surfaced, fixed the same session**: ability_score
+compressing at the top end (max 96.5 -> 91.3) compressed the XGBoost-predicted
+`ability_value` pricing component much more than real `market_value_eur` (unaffected,
+still real Transfermarkt data) -- elite prices dropped (top price €93M -> €82M)
+while median-starter prices barely moved, so the same €1B budget suddenly afforded
+16 top-2%-ability players alongside 8 median starters (target: 4-6) and the
+unconstrained best-XI cost fell to €718M (target: >=€1.5B). Tested whether adjusting
+`BUDGET_EUR` alone could fix this instead -- it can't: the >=€1.5B check depends on
+the players' priced value, not the budget, and the top-11 elites only total €718M
+regardless of budget level. Fixed by reweighting `PRICING_ABILITY_WEIGHT`/
+`PRICING_MARKET_WEIGHT` from 0.7/0.3 to 0.1/0.9 (tested the full range from 0.5/0.5
+to 0.0/1.0 first; 0.1/0.9 is the least extreme split that clears both checks -- 0.2/0.8
+still leaves 7 elites affordable, just outside target). This substantially dilutes
+DESIGN.md section 7.2's original "de-biased pricing" intent (predicting value with
+age/club-strength neutralized specifically to correct for market-value bias) down to
+10% influence -- a real trade-off, approved explicitly by the project owner after
+seeing the predicted-vs-measured numbers for several alternative weights.
+
+**Tests**: `tests/test_real_source.py` -- `_aggregate_real_stats` sums rows inside
+the one-season window once each across competitions (the deliberate cross-
+competition choice), and excludes a row one day outside the window. Found and fixed
+a pre-existing, unrelated test-isolation bug while re-running the full suite:
+`tests/test_pipeline.py` never set `DATA_SOURCE=synthetic` (unlike every other test
+module that seeds a database), so running it in isolation read `DATA_SOURCE=real`
+from `.env` and ingested the real 48-team dataset instead of the synthetic 12-team
+world its assertions expect -- it only passed as part of the full suite because an
+earlier-imported test module's own override happened to leak forward through
+`os.environ`. Fixed by adding the same explicit override every other test module
+already has.

@@ -11,7 +11,10 @@ docs/DECISIONS.md's note that this was the one swap-in point planned from the st
   the dataset's own `current_national_team_id` field, which turned out too sparse to
   trust -- see docs/DECISIONS.md).
 - Minutes, goals, assists and cards are 100% real, aggregated from real appearances
-  in the last ~14 months.
+  in the last 365 days (one season) -- summed across every competition the player
+  appeared in (league, domestic cup, continental cup, international caps), which is
+  a deliberate choice (docs/DECISIONS.md), not a bug; a shorter per-competition
+  breakdown is not computed.
 - There is no real shot-quality (xG/xA) or event-level (tackles, aerials, pressing)
   data in this export -- Transfermarkt doesn't track it, and this build never
   integrated a second source like StatsBomb for it (would be the natural next step).
@@ -38,7 +41,13 @@ DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dat
 
 BIG5_COMPETITION_IDS = {"GB1", "ES1", "L1", "IT1", "FR1"}
 RECENT_SEASONS = {"2025", "2026"}
-APPEARANCE_LOOKBACK_DAYS = 440  # ~ last full season + a bit, from the dataset's max date
+APPEARANCE_LOOKBACK_DAYS = 365  # exactly one season from the dataset's max date -- see
+# docs/DECISIONS.md "Season stat window shrunk from 440 to 365 days": 440 pulled in
+# ~75 days of the *previous* season's tail-end fixtures on top of the current one
+# (confirmed concretely for the top-20 scorers; Harry Kane's reported 68 goals included
+# 5 from outside the 2025-26 season), inflating "season" totals beyond what even the
+# intentional cross-competition sum (league + cup + continental + international caps,
+# left as-is per the project owner's explicit choice) already does on its own.
 
 # The dcaribou export's own max appearances.csv date, confirmed by direct inspection
 # (docs/PROGRESS.md Phase 6c). Not a download timestamp -- the actual freshness of

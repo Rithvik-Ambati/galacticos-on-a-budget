@@ -4,6 +4,15 @@ doesn't cover every FIFA member federation -- 5 real WC2026 teams (Haiti, Cape
 Verde, Ivory Coast, Curacao, DR Congo) have no row there at all, confirmed
 against the actual data_raw/ export. Without this fallback, generate() drops
 them from the drawable pool entirely even though they have full real squads.
+
+`_aggregate_real_stats` must sum each player's season goals/assists/minutes from
+exactly the raw appearance rows inside the one-season lookback window, each row
+counted once, across every competition the player appeared in (a deliberate
+choice, not a bug -- docs/DECISIONS.md "Season stat window shrunk from 440 to
+365 days"). The window used to be 440 days, which pulled in ~75 days of the
+*previous* season's tail-end fixtures on top of the current one; confirmed
+concretely against the real export (Harry Kane's reported 68 goals included 5
+from outside the 2025-26 season).
 """
 
 from __future__ import annotations
@@ -11,8 +20,15 @@ from __future__ import annotations
 import csv
 import gzip
 import os
+from datetime import date
 
-from pipeline.real_source import _load_games_team_sets
+from pipeline.real_source import (
+    APPEARANCE_LOOKBACK_DAYS,
+    DATASET_SNAPSHOT_DATE,
+    _aggregate_real_stats,
+    _load_games_team_sets,
+)
+from pipeline.synthetic_source import TmPlayer
 
 GAMES_HEADER = [
     "game_id", "competition_id", "season", "round", "date", "home_club_id", "away_club_id",
@@ -71,3 +87,79 @@ def test_load_games_team_sets_captures_wc2026_team_names_for_teams_missing_from_
         "3591": "Ivory Coast",
         "32364": "Curacao",
     }
+
+
+APPEARANCES_HEADER = [
+    "appearance_id", "game_id", "player_id", "player_club_id", "player_current_club_id",
+    "date", "player_name", "competition_id", "yellow_cards", "red_cards", "goals",
+    "assists", "minutes_played",
+]
+
+
+def _write_appearances_csv(path: str, rows: list[dict[str, str]]) -> None:
+    with gzip.open(path, "wt", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=APPEARANCES_HEADER)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _appearance_row(**overrides: str) -> dict[str, str]:
+    row = {k: "" for k in APPEARANCES_HEADER}
+    row.update(yellow_cards="0", red_cards="0", goals="0", assists="0", minutes_played="90")
+    row.update(overrides)
+    return row
+
+
+def _tm_player(tm_id: str, name: str) -> TmPlayer:
+    return TmPlayer(
+        tm_id=tm_id, name=name, dob=date(1995, 1, 1), nationality="England",
+        position_group="FW", position_code="ST", preferred_foot="right", height_cm=185,
+        club_id="c1", true_quality=80.0, market_value_eur=50_000_000,
+    )
+
+
+def test_aggregate_real_stats_sums_in_window_rows_once_across_competitions(tmp_path) -> None:
+    """Two rows inside the one-season window, in two different competitions --
+    both must count (the cross-competition sum is a deliberate choice, not a
+    bug), each exactly once."""
+    one_season_ago = date.fromordinal(DATASET_SNAPSHOT_DATE.toordinal() - 10)
+    rows = [
+        _appearance_row(
+            player_id="p1", player_name="Test Striker", competition_id="GB1",
+            date=one_season_ago.isoformat(), goals="2", assists="1", minutes_played="90",
+        ),
+        _appearance_row(
+            player_id="p1", player_name="Test Striker", competition_id="CL",
+            date=one_season_ago.isoformat(), goals="1", assists="0", minutes_played="90",
+        ),
+    ]
+    _write_appearances_csv(os.path.join(tmp_path, "appearances.csv.gz"), rows)
+
+    result = _aggregate_real_stats(str(tmp_path), [_tm_player("p1", "Test Striker")], {}, seed=42)
+
+    assert len(result) == 1
+    assert result[0].goals == 3  # 2 (GB1) + 1 (CL), each row counted once
+    assert result[0].assists == 1
+    assert result[0].minutes == 180
+
+
+def test_aggregate_real_stats_excludes_rows_outside_the_one_season_window(tmp_path) -> None:
+    just_inside = date.fromordinal(DATASET_SNAPSHOT_DATE.toordinal() - APPEARANCE_LOOKBACK_DAYS)
+    just_outside = date.fromordinal(DATASET_SNAPSHOT_DATE.toordinal() - APPEARANCE_LOOKBACK_DAYS - 1)
+    rows = [
+        _appearance_row(
+            player_id="p1", player_name="Test Striker", competition_id="GB1",
+            date=just_inside.isoformat(), goals="5", minutes_played="90",
+        ),
+        _appearance_row(
+            player_id="p1", player_name="Test Striker", competition_id="GB1",
+            date=just_outside.isoformat(), goals="100", minutes_played="90",
+        ),
+    ]
+    _write_appearances_csv(os.path.join(tmp_path, "appearances.csv.gz"), rows)
+
+    result = _aggregate_real_stats(str(tmp_path), [_tm_player("p1", "Test Striker")], {}, seed=42)
+
+    assert len(result) == 1
+    assert result[0].goals == 5  # the 100-goal row one day outside the window must not count
+    assert result[0].minutes == 90

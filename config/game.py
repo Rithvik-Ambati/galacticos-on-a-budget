@@ -162,6 +162,14 @@ ABILITY_WEIGHTS: dict[str, dict[str, float]] = {
 MIN_MINUTES_THRESHOLD: int = 300
 LOW_COVERAGE_LEAGUE_STRENGTH: float = 0.8  # below this -> ability from TM appearance data only
 LOW_COVERAGE_CONFIDENCE: float = 0.4
+
+# Ability-score minutes shrinkage (Part 2 Step B.2): a full-coverage player's
+# percentile-ranked composite score is pulled toward the position-neutral midpoint
+# (50.0) by weight minutes/(minutes+K) -- a small-sample player's noisy per-90 rate
+# gets dampened instead of flowing straight into ability_score at full strength.
+# Confirmed concretely on real data before this existed: a player with 90 minutes
+# reached ability_score=74.4 purely off a lucky single-match per-90 rate.
+ABILITY_MINUTES_SHRINKAGE_K: int = 900
 FULL_COVERAGE_LOW_MINUTES_CONFIDENCE: float = 0.75
 
 # Role-fit formulas: role -> {percentile_key: weight}, same percentile vocabulary as above.

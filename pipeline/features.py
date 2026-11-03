@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.game import (
+    ABILITY_MINUTES_SHRINKAGE_K,
     ABILITY_WEIGHTS,
     FULL_COVERAGE_LOW_MINUTES_CONFIDENCE,
     LOW_COVERAGE_CONFIDENCE,
@@ -82,6 +83,11 @@ def _fallback_ability(per90: dict[str, float]) -> float:
     return round(max(20.0, min(75.0, score)), 1)
 
 
+def _minutes_shrinkage_weight(minutes: int) -> float:
+    """Part 2 Step B.2: minutes/(minutes+K) -- 0 for no minutes, -> 1 as minutes grow."""
+    return minutes / (minutes + ABILITY_MINUTES_SHRINKAGE_K)
+
+
 async def compute_features(session: AsyncSession, snapshot: str = "2025-26") -> int:
     rows = (await session.execute(select(Player, PlayerStatsSeason).join(PlayerStatsSeason))).all()
 
@@ -118,20 +124,49 @@ async def compute_features(session: AsyncSession, snapshot: str = "2025-26") -> 
             pct["dribbled_past_pct_inv"] = round(100.0 - float(dribbled_rank[i]), 1)
             percentiles_by_player[r.player_id] = pct
 
+    # Part 2 Step B.3: the weighted sum of per-metric percentiles ("the composite")
+    # is NOT itself a cross-position-comparable percentile -- different positions'
+    # ABILITY_WEIGHTS formulas mix a different number of, and differently-correlated,
+    # components, so their composites have different-shaped distributions even though
+    # each component is individually a 0-100 percentile. Re-ranking the composite
+    # within its own position group is what actually makes "GK ability 90" and
+    # "FW ability 90" mean the same relative thing. Confirmed concretely on real data
+    # before this existed: GK/DF cleared ability>=90 at ~4x FW's per-capita rate even
+    # though every group's mean was already ~49.6-49.8 by construction.
+    composite_by_player: dict[str, float] = {}
+    for r in raw_rows:
+        percentiles = percentiles_by_player.get(r.player_id)
+        if percentiles is None or r.league_strength < LOW_COVERAGE_LEAGUE_STRENGTH:
+            continue
+        weights = ABILITY_WEIGHTS.get(r.position_group, ABILITY_WEIGHTS["MF"])
+        total_weight = sum(weights.values())
+        composite_by_player[r.player_id] = (
+            sum(percentiles.get(key, 50.0) * w for key, w in weights.items()) / total_weight
+        )
+
+    composite_pct_by_player: dict[str, float] = {}
+    for _group_name, group_rows in by_group.items():
+        covered = [r for r in group_rows if r.player_id in composite_by_player]
+        if len(covered) < 2:
+            continue
+        composites = np.array([composite_by_player[r.player_id] for r in covered])
+        ranks = rankdata(composites, method="average") / len(covered) * 100
+        for i, r in enumerate(covered):
+            composite_pct_by_player[r.player_id] = float(ranks[i])
+
     saved = 0
     for r in raw_rows:
         percentiles = percentiles_by_player.get(r.player_id, {})
-        low_coverage = r.league_strength < LOW_COVERAGE_LEAGUE_STRENGTH or not percentiles
+        composite_pct = composite_pct_by_player.get(r.player_id)
 
-        if low_coverage:
+        if r.league_strength < LOW_COVERAGE_LEAGUE_STRENGTH or composite_pct is None:
             ability_score = _fallback_ability(r.per90)
             confidence = LOW_COVERAGE_CONFIDENCE
         else:
-            weights = ABILITY_WEIGHTS.get(r.position_group, ABILITY_WEIGHTS["MF"])
-            total_weight = sum(weights.values())
-            weighted = sum(percentiles.get(key, 50.0) * w for key, w in weights.items()) / total_weight
             league_factor = 0.9 + 0.1 * min(1.0, r.league_strength)
-            ability_score = round(max(0.0, min(100.0, weighted * league_factor)), 1)
+            raw_score = composite_pct * league_factor
+            shrink = _minutes_shrinkage_weight(r.minutes)
+            ability_score = round(max(0.0, min(100.0, shrink * raw_score + (1.0 - shrink) * 50.0)), 1)
             confidence = 1.0 if r.minutes >= MIN_MINUTES_THRESHOLD else FULL_COVERAGE_LOW_MINUTES_CONFIDENCE
 
         style = [

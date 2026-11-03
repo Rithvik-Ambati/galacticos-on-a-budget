@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from config.game import BUDGET_EUR, PRICE_FLOOR_EUR, SQUAD_SIZE
-from db.models import Player, PlayerFeatures, Price, Squad
-from pipeline import id_resolution, synthetic_source
-from pipeline.features import _group, compute_features
-from pipeline.ingest import run_ingest
-from pipeline.pricing import compute_prices
+# DATA_SOURCE now defaults to "real" (docs/DECISIONS.md "Synthetic data is no longer
+# the silent default"), and this repo's own .env sets it explicitly -- these tests are
+# written against the small, deterministic synthetic world (12 WC teams, known
+# true_quality ground truth), so set it before any pipeline import runs. Without this,
+# running this file in isolation reads DATA_SOURCE=real from .env and ingests the real
+# 48-team dataset instead, which the assertions below don't expect (a real bug this
+# comment is describing, found when a test was run outside the full suite -- another
+# test module's own module-level override happened to mask it there).
+os.environ["DATA_SOURCE"] = "synthetic"
+
+from config.game import BUDGET_EUR, PRICE_FLOOR_EUR, SQUAD_SIZE  # noqa: E402
+from db.models import Player, PlayerFeatures, Price, Squad  # noqa: E402
+from pipeline import id_resolution, synthetic_source  # noqa: E402
+from pipeline.features import _group, compute_features  # noqa: E402
+from pipeline.ingest import run_ingest  # noqa: E402
+from pipeline.pricing import compute_prices  # noqa: E402
 
 SEED = 42
 
