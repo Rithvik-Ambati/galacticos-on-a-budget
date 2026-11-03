@@ -50,8 +50,18 @@ MIN_REAL_LINEUP_SLOTS: int = 7
 
 PRICE_FLOOR_EUR: int = 1_000_000
 PRICE_ROUND_EUR: int = 1_000_000
-PRICING_ABILITY_WEIGHT: float = 0.7
-PRICING_MARKET_WEIGHT: float = 0.3
+# Part 2 Step C.1: was 0.7/0.3 (DESIGN.md section 7.2's original "de-biased pricing"
+# split). The ability-score recalibration (Part 2 Step B) compressed the top of
+# ability_score's range (96.5 -> 91.3), which compressed the XGBoost-predicted
+# ability_value component much more than real market_value_eur (unaffected) --
+# elite prices fell while median-starter prices barely moved, so the EUR1B budget
+# suddenly afforded 16 top-2%-ability players alongside 8 median starters (target
+# 4-6) and the unconstrained best-XI cost fell to EUR718M (target >=EUR1.5B).
+# Re-weighted toward market_value, which is real and uncompressed; see
+# docs/DECISIONS.md for the full range tested and the trade-off this accepts
+# (pricing is now mostly market-value-driven, diluting the de-biasing design intent).
+PRICING_ABILITY_WEIGHT: float = 0.1
+PRICING_MARKET_WEIGHT: float = 0.9
 
 
 @dataclass(frozen=True)

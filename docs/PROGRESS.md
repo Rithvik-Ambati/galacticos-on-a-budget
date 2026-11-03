@@ -928,3 +928,34 @@ real Langfuse UI and reading them directly.
 **README.md updated**: Docker Compose is now the primary "how to run it" path
 (previously SQLite-only, since Docker wasn't reachable when that section was
 first verified); SQLite remains documented as the no-Docker fallback.
+
+## Part 2 -- player stats + ability score + pricing fix (Steps A/B/C)
+
+Built: diagnosed and fixed a real stat-inflation bug (Harry Kane showing 68 goals
+was a cross-competition + two-season-overlap sum, not one season's output),
+rewrote `pipeline/features.py`'s ability score to add minutes shrinkage
+(`config.game.ABILITY_MINUTES_SHRINKAGE_K`) and position recalibration (the
+weighted-percentile composite is re-percentile-ranked within its position group
+before becoming `ability_score`), and reweighted `pipeline/pricing.py`'s
+`PRICING_ABILITY_WEIGHT`/`PRICING_MARKET_WEIGHT` from 0.7/0.3 to 0.1/0.9 after the
+ability recalibration compressed the ability-driven price component enough to
+break the EUR1B budget sanity check. Full diagnosis, before/after tables, and the
+range of alternatives tested: `docs/DECISIONS.md`.
+
+**How to verify**: re-run `python -m pipeline.run_all` (or the individual
+`compute_features`/`compute_prices`/`compute_team_profiles`/`build_*_documents`
+calls) against real data and check: top 20 overall ability spans all four position
+groups, no sub-450-minute player in the overall top 100, the budget_sanity report
+from `compute_prices` shows 4-6 elites affordable alongside 8 median starters and
+an unconstrained top-11-elite cost >=EUR1.5B, and the rating/simulation win% vs a
+weak real opponent (Iran, nt_3582) and a strong one (Türkiye, nt_3381) land in
+75-85%/55-65% with a worst->optimal gap >=15 points each (`tests/test_simulation.py`
+covers the formula-level monotonicity properties; the live win% numbers themselves
+need a real-data run, not just the test suite, since they depend on the actual
+optimizer output against real squads).
+
+**Known issue**: the weak-opponent win% (75.0%) lands right at the lower edge of
+its target window with no headroom -- a future ability/pricing change could push
+it below 75% without a large shift. Also found and fixed along the way: a
+pre-existing test-isolation bug in `tests/test_pipeline.py` (never set
+`DATA_SOURCE=synthetic`, unlike every other test module that seeds a database).

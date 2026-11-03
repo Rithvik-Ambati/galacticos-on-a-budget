@@ -870,3 +870,29 @@ world its assertions expect -- it only passed as part of the full suite because 
 earlier-imported test module's own override happened to leak forward through
 `os.environ`. Fixed by adding the same explicit override every other test module
 already has.
+
+## Part 2 Step C: pricing reweight applied; rating calibration re-verified clean
+
+**What**: the 0.1/0.9 `PRICING_ABILITY_WEIGHT`/`PRICING_MARKET_WEIGHT` reweight
+proposed above was applied after the project owner's explicit approval (shown the
+predicted-vs-measured numbers for 0.7/0.3 through 0.0/1.0 first). Prices
+recomputed against live Postgres: budget sanity now passes both checks --
+6 top-2%-ability players afford alongside 8 median starters (target 4-6, was 16),
+unconstrained top-11-elite XI costs EUR1.506B (target >=EUR1.5B, was EUR718M).
+`team_profiles` and `documents` -- left empty after Step B's truncate, gated
+behind this approval -- were regenerated (84 team profiles, 4839 documents, all
+embedded).
+
+**Rating calibration re-verified** (the exact Iran/Türkiye pair docs/DECISIONS.md's
+earlier rebalance passes used, true-optimal lineup via `engine.optimizer.
+find_optimal_lineup`, lowest-ability legal lineup as "worst"): all four targets
+pass after the ability-score and pricing changes --
+
+| | optimal win% | worst win% | gap |
+|---|---|---|---|
+| weak (Iran) | 75.0% (target 75-85%) | 51.4% | 23.6pts (target >=15) |
+| strong (Türkiye) | 63.7% (target 55-65%) | 40.5% | 23.2pts (target >=15) |
+
+Weak-opponent win% lands right at the lower edge of its target window, not
+comfortably mid-range -- worth knowing if a future change nudges ability scores or
+pricing again, since there's no headroom left on that side before it would miss.
