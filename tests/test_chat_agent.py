@@ -207,7 +207,7 @@ async def test_agent_falls_back_after_exhausting_tool_rounds(locked_in_state) ->
 
 async def test_agent_falls_back_when_answer_leaks_a_tool_name(locked_in_state) -> None:
     engine, state = locked_in_state
-    leaking_text = "I can test that with evaluate_swap if you want."
+    leaking_text = "I can test that with simulate_what_if if you want."
     provider = _FakeToolCallingProvider(
         [
             _FakeMessage([_FakeBlock(type="text", text=leaking_text)]),
@@ -218,7 +218,7 @@ async def test_agent_falls_back_when_answer_leaks_a_tool_name(locked_in_state) -
     async with session_factory() as session:
         answer, debug = await run_chat_agent(session, "could I improve my squad?", state, provider)
 
-    assert "evaluate_swap" not in answer
+    assert "simulate_what_if" not in answer
     assert debug["used_fallback"] is True
     assert debug["fallback_reason"] == "safety_check_failed"
 

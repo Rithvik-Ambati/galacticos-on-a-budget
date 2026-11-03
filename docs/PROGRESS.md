@@ -991,3 +991,46 @@ numeric validator and final numeric correctness both 100%.
 **Known issue**: p95 latency 7.34s, over the <6s target -- the slowest cases
 involve a multi-round tool loop (e.g. `evaluate_swap` + `simulate_what_if` back to
 back). Not investigated further this session.
+
+## Part 1 follow-up: removed `evaluate_swap` as a standalone chat tool (latency)
+
+**What**: `llm/chat_agent.py`'s `TOOLS` list no longer offers `evaluate_swap`
+alongside `simulate_what_if`. `simulate_what_if` already called the same
+`evaluate_swap()` engine helper internally and then added the win/draw/loss
+simulation on top, so it was a strict superset returning everything
+`evaluate_swap` could -- offering both let the model call `evaluate_swap` for a
+rating-only phrasing and then `simulate_what_if` right after for the same swap
+(two sequential real Anthropic round-trips instead of one), which is almost
+certainly what pushed p95 latency to 7.34s against the <6s target (see the Known
+issue above). The `evaluate_swap`/`simulate_what_if` descriptions were also nearly
+identical prose, which made the two tools look like alternatives rather than one
+subsuming the other. See `docs/DECISIONS.md` for the reasoning in full.
+
+Not a logic change: `_tool_evaluate_swap` (the helper `_tool_simulate_what_if` calls
+internally) is untouched, as is `graph/chat_tools.py`'s `evaluate_swap()` and the
+rating/engine math underneath it. Only the model-facing tool schema and dispatch
+table shrank by one entry, and `simulate_what_if`'s description was tightened to
+say explicitly that it covers every swap/what-if phrasing, rating-only included,
+and must never be followed by a second call for the same swap.
+
+**How to verify**: `make test` (updated `tests/test_chat_agent.py`'s tool-name-leak
+test to use `simulate_what_if` as its example literal, since `evaluate_swap` is no
+longer a real tool name an answer could leak). The actual latency claim can only be
+re-measured by re-running the live suite by hand (`LLM_PROVIDER=anthropic`, a real
+`ANTHROPIC_API_KEY`): `python -m evals.verification.run_chat_verification` --
+**not run this session** (costs real Anthropic API calls per CLAUDE.md/DESIGN.md
+section 12's "live LLM runs never execute by default" rule); the project owner
+should run it and confirm p95 now lands under 6s and the `f`-category (what_if)
+rows in the new `evals/reports/chat_verification_<date>.md` show a single
+`simulate_what_if` call each, not `evaluate_swap`+`simulate_what_if` or a
+doubled-up call.
+
+**Known issue**: this does not fix the two other real round-trip-cost contributors
+visible in the same report -- `f2`'s doubled `evaluate_swap, evaluate_swap` call
+(now moot, since that tool is gone, but the underlying "the model sometimes calls
+the same tool twice for one question" behavior could recur with `simulate_what_if`
+and wasn't root-caused) and the `why_result` (`e1`-`e5`) category, which passed on
+answer quality but is the single least token-cheap case per the "why did we win"
+transcripts (judging from answer length) and would only need a `get_postmatch`/
+`get_session_state` call anyway -- it never appeared to call both. Worth re-checking
+against the re-run report if p95 is still over target.

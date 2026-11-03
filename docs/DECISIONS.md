@@ -896,3 +896,48 @@ pass after the ability-score and pricing changes --
 Weak-opponent win% lands right at the lower edge of its target window, not
 comfortably mid-range -- worth knowing if a future change nudges ability scores or
 pricing again, since there's no headroom left on that side before it would miss.
+
+## Part 1 latency follow-up: dropped `evaluate_swap` as a standalone chat tool
+
+**Why**: the live chat-agent verification (`evals/reports/chat_verification_2026-
+11-03.md`) measured p95 latency at 7.34s against a <6s target. `llm/chat_agent.py`
+exposed both `evaluate_swap` ("Evaluate swapping... Returns the rating change")
+and `simulate_what_if` ("Evaluate swapping... returning both the rating change AND
+the updated win/draw/loss simulation") to the model as separate tools with nearly
+identical descriptions and identical input schemas. `simulate_what_if`'s own
+implementation (`_tool_simulate_what_if`) already calls the exact same
+`_tool_evaluate_swap`/`evaluate_swap()` helper internally before adding the
+simulation on top -- it was never anything but a strict superset of
+`evaluate_swap`, computed in one tool execution, not an extra round-trip. With
+both offered, nothing in the schema told the model that `evaluate_swap` was
+redundant once `simulate_what_if` existed; a plausible path for a what-if question
+is the model picking `evaluate_swap` first for the rating, then realizing (or
+being asked) about match outcome and calling `simulate_what_if` next for the same
+swap -- two sequential real Anthropic API calls where one suffices. The report's
+`f2` row shows a different but related symptom already happening in practice: the
+model called the *same* tool (`evaluate_swap`) twice for one question.
+
+**Decision**: remove `evaluate_swap` from the model-facing `TOOLS` list and from
+`_TOOL_DISPATCH` in `llm/chat_agent.py`. `simulate_what_if` is now the only tool
+for any swap/what-if question, rating-only phrasing included, and its description
+was rewritten to say so explicitly and to tell the model never to call it twice or
+follow it with a second call for the same swap. The underlying `_tool_evaluate_swap`
+Python function, and `graph/chat_tools.py`'s `evaluate_swap()` engine call it
+wraps, are both untouched and still used -- only `_tool_simulate_what_if` calls
+them now, directly, same as before. No rating/engine/swap-evaluation logic changed.
+
+**Alternatives considered**: tightening both tools' descriptions to disambiguate
+when to use which, instead of removing one. Rejected because disambiguation by
+prompt wording is probabilistic -- it can reduce but not guarantee against the
+model picking the "wrong" one first and the superset tool second for the same
+question, which is exactly the failure mode costing the round-trip. Removing the
+redundant tool from the model's choice set removes the possibility entirely
+rather than just making it less likely, at no cost (the engine-side compute
+`simulate_what_if` does beyond `evaluate_swap` -- one more lineup rating and
+match simulation -- is local, deterministic, and cheap next to an Anthropic
+round-trip).
+
+**Not done / needs the project owner**: re-running the live verification suite to
+confirm the p95 number actually drops below 6s (CLAUDE.md: live LLM runs are
+opt-in by hand, not run as part of this task). `docs/PROGRESS.md` has the exact
+command and what to look for in the regenerated report.
