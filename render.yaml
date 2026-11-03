@@ -8,7 +8,7 @@
 # other setup needed -- no database, no Redis, no secrets/env vars to fill in.
 services:
   - type: web
-    name: gaffer-demo
+    name: galacticos-on-a-budget
     runtime: docker
     dockerfilePath: ./Dockerfile.demo
     plan: free
