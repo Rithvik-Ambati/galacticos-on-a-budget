@@ -30,6 +30,7 @@ COPY rag ./rag
 COPY llm ./llm
 COPY graph ./graph
 COPY api ./api
+COPY observability.py ./observability.py
 
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 

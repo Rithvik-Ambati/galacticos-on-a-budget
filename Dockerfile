@@ -16,6 +16,7 @@ COPY rag ./rag
 COPY llm ./llm
 COPY graph ./graph
 COPY api ./api
+COPY observability.py ./observability.py
 
 ENV PYTHONUNBUFFERED=1
 
