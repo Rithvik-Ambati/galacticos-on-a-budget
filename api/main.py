@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -69,3 +71,19 @@ app.add_middleware(
 )
 
 app.include_router(router)
+# Also serve every endpoint under /api -- the built frontend (frontend/dist) always
+# calls BASE="/api/..." (frontend/src/api.ts), matching dev's Vite proxy rewrite
+# (vite.config.ts strips /api before forwarding to this same app on a different
+# port). In production there's no separate dev server or proxy: one process serves
+# both, so the app itself needs the /api-prefixed routes to exist. The unprefixed
+# routes above are untouched -- tests hit those directly (tests/test_api.py).
+app.include_router(router, prefix="/api")
+
+# Single-process deploy (Dockerfile.demo, docs/DECISIONS.md "Fast public demo
+# deployment"): serve the built frontend's static files and fall back to its
+# index.html for any other path (client-side routing). Mounted last, and only if
+# frontend/dist actually exists, so it's a no-op in dev/test where nobody has run
+# `npm run build` -- /api and /health etc. above already matched first regardless.
+_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")

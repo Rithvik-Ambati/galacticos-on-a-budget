@@ -1,0 +1,20 @@
+# Render Blueprint for the fast, shareable demo link (Dockerfile.demo, not the
+# repo-root Dockerfile -- see that file's own header for the real Postgres+Redis
+# production setup this intentionally skips). docs/DECISIONS.md "Fast public demo
+# deployment" explains the trade-offs (synthetic data, stub LLM provider, SQLite,
+# no persistence across a cold start).
+#
+# To use: on Render's dashboard, "New +" -> "Blueprint", point it at this repo. No
+# other setup needed -- no database, no Redis, no secrets/env vars to fill in.
+services:
+  - type: web
+    name: gaffer-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile.demo
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATA_SOURCE
+        value: synthetic
+      - key: LLM_PROVIDER
+        value: stub

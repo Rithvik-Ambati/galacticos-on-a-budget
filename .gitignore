@@ -37,6 +37,7 @@ dist/
 venv/
 *.log
 .hypothesis/
+*.tsbuildinfo
 
 # Playwright
 frontend/test-results/
