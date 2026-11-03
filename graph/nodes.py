@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import Any
+from typing import Any, cast
 
 from langgraph.types import interrupt
 from sqlalchemy import select
@@ -85,8 +85,9 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             _fieldable_cache[team_id] = result is not None
             if result is None:
                 logger.warning(
-                    "excluding %s from draw(): squad of %d can't field 11 even with "
-                    "position-group fallback", team_id, len(squad),
+                    "excluding %s from draw(): squad of %d can't field 11 even with position-group fallback",
+                    team_id,
+                    len(squad),
                 )
         return _fieldable_cache[team_id]
 
@@ -101,8 +102,10 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             # has no Squad row at all and previously left draw() picking a team
             # with zero players most of the time in UCL mode.
             teams = (
-                await session.execute(select(Squad.team_id).where(Squad.tournament == tournament).distinct())
-            ).scalars().all()
+                (await session.execute(select(Squad.team_id).where(Squad.tournament == tournament).distinct()))
+                .scalars()
+                .all()
+            )
             fieldable_teams = [t for t in sorted(teams) if await _can_field_eleven(session, t)]
 
         fixed = state.get("fixed_opponent_team_id")
@@ -167,8 +170,12 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             candidate_pool = await load_candidate_pool(session, exclude_ids=opponent_squad_ids)
 
             analysis = build_analysis(
-                lineup, opponent_profile, opponent_squad_ids, candidate_pool,
-                opponent_lineup=opponent_lineup, session_id=state["session_id"],
+                lineup,
+                opponent_profile,
+                opponent_squad_ids,
+                candidate_pool,
+                opponent_lineup=opponent_lineup,
+                session_id=state["session_id"],
             )
         return {"analysis": analysis.model_dump()}
 
@@ -209,9 +216,7 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
             "counter_round": round_number,
             "counter_history": [*state.get("counter_history", []), result.model_dump()],
             "opponent_formation": new_opponent_lineup.formation,
-            "opponent_lineup_assignments": {
-                slot_id: p.player_id for slot_id, p in new_opponent_lineup.assignments.items()
-            },
+            "opponent_lineup_assignments": {slot_id: p.player_id for slot_id, p in new_opponent_lineup.assignments.items()},
             "decision": None,
         }
 
@@ -257,7 +262,20 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
         question = payload["question"]
         with traced_span("node.chat", session_id=state.get("session_id"), input=question) as span:
             async with session_factory() as session:
-                answer = await answer_question(session, question, state, provider)
+                if hasattr(provider, "complete_with_tools"):
+                    from llm.chat_agent import run_chat_agent
+                    from llm.provider import ToolCallingProvider
+
+                    answer, debug = await run_chat_agent(session, question, state, cast(ToolCallingProvider, provider))
+                    if span is not None:
+                        span.update(
+                            metadata={"tools_called": debug["tools_called"], "fallback_reason": debug["fallback_reason"]}
+                        )
+                else:
+                    # StubProvider has no reasoning to pick a tool from free text --
+                    # the deterministic keyword dispatcher is the real answer here,
+                    # not a degraded stand-in for the agent above.
+                    answer = await answer_question(session, question, state, provider)
             if span is not None:
                 span.update(output=answer)
         messages = [

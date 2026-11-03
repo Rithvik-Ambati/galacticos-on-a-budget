@@ -98,7 +98,7 @@ _GLOBAL_RE = re.compile(
 
 
 def resolve_scope(question: str) -> str:
-    """"mine" | "opponent" | "global". "my squad"/"mine" always wins even if the
+    """ "mine" | "opponent" | "global". "my squad"/"mine" always wins even if the
     same sentence also says "overall" (e.g. "from my squad not in overall") --
     checking order matters here, not just presence. Bare questions with no scope
     word at all ("who are the best rated players?") default to "mine": the
@@ -157,7 +157,7 @@ def _format_stat_value(stat: str, value: Any) -> str:
     return str(int(value))
 
 
-async def _scoped_stat_rows(
+async def scoped_stat_rows(
     session: AsyncSession, stat: str, player_ids: set[str] | None, limit: int = 5
 ) -> list[tuple[str, Any]]:
     if player_ids is not None and not player_ids:
@@ -211,7 +211,7 @@ async def _answer_stat_question(session: AsyncSession, ctx: SessionContext, stat
         value_key = "ability_score" if stat == "ability" else "price_eur"
         rows = [(str(r["name"]), r[value_key]) for r in result.rows[:5]]
     else:
-        rows = await _scoped_stat_rows(session, stat, ids, limit=5)
+        rows = await scoped_stat_rows(session, stat, ids, limit=5)
 
     if not rows:
         logger.info("chat stat fallback: reason=no_rows stat=%s scope=%s", stat, scope)
@@ -245,16 +245,14 @@ async def answer_why_result(ctx: SessionContext) -> str:
     lead = f"You {result} {score_clause} against {ctx.opponent_name}."
 
     items = (ctx.post_match_analysis or {}).get("items", [])
-    highlights = [
-        it["description"] for it in items if it.get("outcome") in ("paid_off", "exposed", "unexpectedly_breached")
-    ]
+    highlights = [it["description"] for it in items if it.get("outcome") in ("paid_off", "exposed", "unexpectedly_breached")]
     if not highlights:
         logger.info("chat fallback: reason=no_postmatch_highlights question_type=why_result")
         return lead + " I don't have a detailed breakdown beyond the final score."
     return lead + " " + " ".join(highlights[:2])
 
 
-_INTERNAL_ID_RE = re.compile(r"\b(nt_|club_)\w+", re.IGNORECASE)
+INTERNAL_ID_RE = re.compile(r"\b(nt_|club_)\w+", re.IGNORECASE)
 
 
 async def answer_via_retrieval(session: AsyncSession, question: str, ctx: SessionContext) -> str:
@@ -283,17 +281,14 @@ async def answer_via_retrieval(session: AsyncSession, question: str, ctx: Sessio
     )
     if not in_scope:
         logger.info("chat fallback: reason=out_of_scope_retrieval entity_id=%s question=%r", entity_id, question)
-        return (
-            "I couldn't find a reliable answer scoped to your squad or the opponent -- "
-            "try naming the player directly."
-        )
+        return "I couldn't find a reliable answer scoped to your squad or the opponent -- try naming the player directly."
 
     text = doc.text
     if doc_type == "opponent_report":
-        text = _INTERNAL_ID_RE.sub(ctx.opponent_name, text, count=1)
-    elif _INTERNAL_ID_RE.search(text):
+        text = INTERNAL_ID_RE.sub(ctx.opponent_name, text, count=1)
+    elif INTERNAL_ID_RE.search(text):
         logger.info("chat fallback: reason=id_leak_redacted entity_id=%s question=%r", entity_id, question)
-        text = _INTERNAL_ID_RE.sub("the opponent", text)
+        text = INTERNAL_ID_RE.sub("the opponent", text)
     return text
 
 
@@ -311,9 +306,7 @@ async def retrieve(
     return await rag_retrieve(session, question, embedder=embedder, reranker=reranker)
 
 
-async def evaluate_swap(
-    session: AsyncSession, state: GameState, out_slot: str, in_player_id: str
-) -> dict[str, object]:
+async def evaluate_swap(session: AsyncSession, state: GameState, out_slot: str, in_player_id: str) -> dict[str, object]:
     assignments = dict(state.get("lineup_assignments", {}))
     if out_slot not in assignments:
         return {"ok": False, "reason": f"no player currently in slot {out_slot}"}
@@ -336,13 +329,13 @@ async def evaluate_swap(
     if not validation.valid:
         return {"ok": False, "reason": "; ".join(v.message for v in validation.violations)}
 
-    opponent_profile = await load_team_profile(
-        session, state["opponent_team_id"], state["opponent_team_id"], "4-2-3-1"
-    )
+    opponent_profile = await load_team_profile(session, state["opponent_team_id"], state["opponent_team_id"], "4-2-3-1")
     before_rating = RATING_MODEL.rate(before_lineup, opponent_profile).overall
     after_rating = RATING_MODEL.rate(after_lineup, opponent_profile).overall
     return {
-        "ok": True, "rating_before": before_rating, "rating_after": after_rating,
+        "ok": True,
+        "rating_before": before_rating,
+        "rating_after": after_rating,
         "rating_gain": round(after_rating - before_rating, 1),
     }
 
@@ -390,9 +383,7 @@ async def answer_question(session: AsyncSession, question: str, state: GameState
         if lineup_ids:
             sims = await similar_players(session, lineup_ids[0])
             if sims:
-                return "Similar players by playing style: " + ", ".join(
-                    f"{s['name']} ({s['similarity']:.2f})" for s in sims
-                )
+                return "Similar players by playing style: " + ", ".join(f"{s['name']} ({s['similarity']:.2f})" for s in sims)
         return "Pick a player in your lineup first, then ask who plays like them."
 
     if is_why_result_question(q):

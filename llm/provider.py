@@ -5,13 +5,31 @@ asked to produce a number itself, on any provider.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from config.settings import get_settings
 
 
 class Provider(Protocol):
     def complete(self, prompt: str, *, system: str | None = None, max_tokens: int = 600) -> str: ...
+
+
+class ToolCallingProvider(Protocol):
+    """Providers capable of real tool-calling (llm/chat_agent.py's agent loop).
+    StubProvider has no reasoning to decide which tool a question needs, so it
+    does not implement this -- graph/nodes.py's chat() routes it to graph/
+    chat_tools.py's deterministic keyword dispatch instead, never to the agent.
+
+    Declares `complete` too (identical to `Provider`) purely so a value typed as
+    `ToolCallingProvider` is also structurally a `Provider` wherever that's needed
+    (llm/chat_agent.py's fallback path calls graph/chat_tools.py's answer_question,
+    which takes a `Provider`) -- every real implementation is `AnthropicProvider`,
+    which already has both methods regardless of how it's typed at a given call site.
+    """
+
+    def complete(self, prompt: str, *, system: str | None = None, max_tokens: int = 600) -> str: ...
+
+    def complete_with_tools(self, *, system: str, messages: list[Any], tools: list[Any], max_tokens: int = 1024) -> Any: ...
 
 
 class StubProvider:
@@ -45,6 +63,14 @@ class AnthropicProvider:
             messages=[{"role": "user", "content": prompt}],
         )
         return "".join(block.text for block in response.content if block.type == "text")
+
+    def complete_with_tools(self, *, system: str, messages: list[Any], tools: list[Any], max_tokens: int = 1024) -> Any:
+        """Raw Anthropic Message (may contain tool_use blocks) -- llm/chat_agent.py
+        drives the tool-use loop itself; this method is the one real network call
+        per round."""
+        return self._client.messages.create(
+            model=self._model, max_tokens=max_tokens, system=system, messages=messages, tools=tools
+        )
 
 
 def get_provider() -> Provider:
