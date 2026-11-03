@@ -43,6 +43,12 @@ REPORT_DIR = Path(__file__).parents[1] / "reports"
 
 _TOOL_NAME_RE = re.compile(r"\b(" + "|".join(re.escape(t["name"]) for t in TOOLS) + r")\b")
 
+_HONESTY_WORDS = (
+    "don't have", "don't track", "no data", "not something i", "can't answer",
+    "outside what", "not able to", "only track", "doesn't cover", "no save",
+    "no salary", "no social media", "no weather", "no ballon d'or", "no real-world transfer",
+)
+
 
 def _norm(s: str) -> str:
     return s.lower().replace(",", "").replace("€", "eur").replace("$", "")
@@ -113,7 +119,25 @@ def _check_case(q: dict[str, Any], answer: str, debug: dict[str, Any]) -> CaseRe
     tool_correct: bool | None = None
     facts_correct: bool | None = None
 
-    if category in ("my_team_stats", "opponent_stats", "global_stats", "followups"):
+    if any(k in facts for k in ("back_four", "midfield")):
+        # a4/a5-style questions: a list of named players, not a single stat leader --
+        # get_session_state doesn't take a scope param, so scope correctness isn't
+        # applicable here.
+        tool_correct = any(t in tool_names for t in q["expected_tools"])
+        if not tool_correct:
+            reasons.append(f"no expected tool called (got {tool_names})")
+        named = [entry.split("(")[0].strip() for values in facts.values() if isinstance(values, list) for entry in values]
+        facts_correct = any(_fact_present(answer, name) for name in named)
+        if not facts_correct:
+            reasons.append(f"none of the expected named players found: {named}")
+    elif "honest_gap" in facts:
+        # b3-style: an honest data-gap admission, same bar as out_of_scope (g1-g5),
+        # just inside an otherwise stat-shaped category.
+        tool_correct = any(t in tool_names for t in q["expected_tools"]) if q["expected_tools"] else None
+        facts_correct = any(w in answer.lower() for w in _HONESTY_WORDS)
+        if not facts_correct:
+            reasons.append("no honest 'I don't have that data' signal found")
+    elif category in ("my_team_stats", "opponent_stats", "global_stats", "followups"):
         scope_correct = scope_used == q["expected_scope"]
         if not scope_correct:
             reasons.append(f"scope: expected {q['expected_scope']!r}, query_stats used {scope_used!r}")
@@ -121,6 +145,11 @@ def _check_case(q: dict[str, Any], answer: str, debug: dict[str, Any]) -> CaseRe
         if not tool_correct:
             reasons.append(f"no expected tool called (got {tool_names})")
         facts_correct = _fact_present(answer, facts["answer"], facts.get("value"))
+        if not facts_correct and facts.get("also"):
+            # a tie at the top -- any of the tied names is an acceptable answer too.
+            # "also" entries are human-readable ("Name (value, tied)"); only the name
+            # before the first "(" is the literal string to look for.
+            facts_correct = any(_fact_present(answer, alt.split("(")[0].strip()) for alt in facts["also"])
         if not facts_correct:
             reasons.append(f"expected fact not found: {facts.get('answer')} / {facts.get('value')}")
     elif category == "why_result":
@@ -128,9 +157,9 @@ def _check_case(q: dict[str, Any], answer: str, debug: dict[str, Any]) -> CaseRe
         if not tool_correct:
             reasons.append(f"no postmatch/session tool called (got {tool_names})")
         facts_correct = True
-        if "result" in facts and not any(tok in _norm(answer) for tok in ("2-3", "lost", "loss")):
+        if "result" in facts and not any(tok in _norm(answer) for tok in ("2-0", "won", "win")):
             facts_correct = False
-            reasons.append("final result (2-3 loss) not mentioned")
+            reasons.append("final result (2-0 win) not mentioned")
     elif category == "what_if":
         tool_correct = any(t in tool_names for t in ("evaluate_swap", "simulate_what_if"))
         if not tool_correct:
@@ -147,18 +176,7 @@ def _check_case(q: dict[str, Any], answer: str, debug: dict[str, Any]) -> CaseRe
         if not facts_correct:
             reasons.append(f"expected rating_after~{facts.get('rating_after')} or correct direction not evidenced")
     elif category == "out_of_scope":
-        honesty_words = (
-            "don't have",
-            "don't track",
-            "no data",
-            "not something i",
-            "can't answer",
-            "outside what",
-            "not able to",
-            "only track",
-            "doesn't cover",
-        )
-        facts_correct = any(w in answer.lower() for w in honesty_words)
+        facts_correct = any(w in answer.lower() for w in _HONESTY_WORDS)
         if not facts_correct:
             reasons.append("no honest 'I don't have that data' signal found")
         tool_correct = True

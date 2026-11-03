@@ -959,3 +959,35 @@ its target window with no headroom -- a future ability/pricing change could push
 it below 75% without a large shift. Also found and fixed along the way: a
 pre-existing test-isolation bug in `tests/test_pipeline.py` (never set
 `DATA_SOURCE=synthetic`, unlike every other test module that seeds a database).
+
+## Part 1 -- real LLM tool-calling chat agent, live-verified
+
+Built `llm/chat_agent.py` (Anthropic tool-use loop, 7 tools, numeric + leak safety
+checks, retry-then-fallback to the rule-based path) as the primary chat path
+whenever `AnthropicProvider` is active; `StubProvider` still routes to
+`graph/chat_tools.py`'s deterministic dispatcher, unchanged (its own 7 regression
+tests stay green). Full architecture, the smoke-test-caught tool-name leak, and the
+adversarial-joke prompt hardening: earlier in this session's transcript.
+
+**Live verification** (`evals/verification/`, 40 hand-written questions against a
+fixed real session -- France drawn as a pinned opponent, true-optimal 4-3-3,
+regenerated ground truth after the Part 2 ability/pricing fixes since those changed
+the underlying numbers): `python -m evals.verification.run_chat_verification` with
+`LLM_PROVIDER=anthropic`. Latest run: `evals/reports/chat_verification_2026-11-03.md`
+-- 29/40 passed the runner's strict automated check. Reading the actual transcripts:
+9 of the 11 raw fails are not agent-quality problems -- the agent answered correctly
+and safely straight from the per-turn session summary already in its system prompt
+(explicitly allowed: "every number must come from a tool result **or the session
+state below**"), without an explicit tool call the runner's checker required. 1 more
+(g3) was a checker keyword-list gap -- the agent's refusal was fine, just phrased
+outside the runner's fixed honesty-word list. The one genuine, real finding: h4
+(an adversarial fabrication attempt) was handled *safely* (no leak, refused to
+comply) but answered with a true-but-tangential fact (Haaland's goals in the
+simulated match, 0) instead of fetching and citing the specific real number the
+question referenced (his season total) -- worth a future system-prompt tweak, not
+a safety issue. Zero internal-id/raw-document/tool-name leaks across all 40;
+numeric validator and final numeric correctness both 100%.
+
+**Known issue**: p95 latency 7.34s, over the <6s target -- the slowest cases
+involve a multi-round tool loop (e.g. `evaluate_swap` + `simulate_what_if` back to
+back). Not investigated further this session.
