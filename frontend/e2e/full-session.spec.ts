@@ -21,7 +21,7 @@ const SLOT_GROUPS: { id: string; group: string }[] = [
   { id: "ST", group: "FW" },
   { id: "RW", group: "FW" },
 ];
-const BUDGET_EUR = 1_000_000_000;
+const BUDGET_EUR = 500_000_000;
 
 interface Candidate {
   player: { player_id: string; name: string; nationality: string; price_eur: number };

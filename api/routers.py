@@ -221,9 +221,9 @@ async def search_players(
     opponent_team_id = state.get("opponent_team_id")
     opponent_ids = await load_squad_player_ids(session, opponent_team_id) if opponent_team_id else set()
 
-    pool = await load_candidate_pool(session, exclude_ids=set(), position_group=position_group, limit=400)
-    if q:
-        pool = [p for p in pool if q.lower() in p.name.lower()]
+    pool = await load_candidate_pool(
+        session, exclude_ids=set(), position_group=position_group, name_query=q or None, limit=400
+    )
     if max_price_eur is not None:
         # still ability-sorted (load_candidate_pool's own order), just capped to what's
         # affordable -- without this, a tight budget can never find anything to show,

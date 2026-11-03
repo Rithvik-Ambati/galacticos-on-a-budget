@@ -941,3 +941,73 @@ round-trip).
 confirm the p95 number actually drops below 6s (CLAUDE.md: live LLM runs are
 opt-in by hand, not run as part of this task). `docs/PROGRESS.md` has the exact
 command and what to look for in the regenerated report.
+
+## Player search silently dropped any player outside the global top-400-by-ability
+
+**What**: `pipeline/to_engine.py::load_candidate_pool` ran `ORDER BY ability_score
+DESC LIMIT 400` in SQL, then `GET /sessions/{id}/players/search`
+(`api/routers.py::search_players`) filtered that already-truncated 400-row list by
+the user's search text in Python. A player whose ability score put them outside
+the global top 400 could never be found by name, however exact the search --
+proved concretely against this session's live, running app: the seeded data has
+two players named "Jude Diallo" (ability 68.9 and 13.2); searching "Jude Diallo"
+only ever returned the 68.9 one, because the 13.2 one (rank 829 of 830) never
+survived the SQL-level cap before the name filter even ran. Found while
+investigating the project owner's report of not being able to find specific real
+players (Virgil van Dijk, Arda Güler) by name in Champions League mode -- this is
+one of the two plausible code-level causes identified (the other, more likely for
+expensive real stars: the "Affordable only" search toggle, on by default, silently
+hiding anything over budget -- not a bug, working as designed per the "A real
+product gap, not just a bug" fix in `docs/PROGRESS.md`'s Phase 6c manual
+playthrough). Could not confirm which actually applied to those two specific
+players -- this session runs on synthetic data; the real-dataset host
+(`pub-e682...r2.dev`) returns HTTP 403 from this sandbox.
+
+**Fix**: `load_candidate_pool` takes a new optional `name_query` parameter and
+applies it in the SQL `WHERE` clause, before the ability-sorted `LIMIT`, instead of
+after. `search_players` passes its `q` query param through as `name_query` instead
+of filtering the already-capped Python list. The ability-sorted cap itself is
+unchanged and still applies to every other caller (`engine.optimizer`'s candidate
+pool, the no-query browsing case) -- it's a legitimate, by-design "top N by
+ability" cap for browsing, just no longer allowed to make a *named* search of the
+full player table silently incomplete.
+
+**Not done**: this doesn't address two related, lower-priority gaps noticed while
+fixing this, both out of scope for the reported bug: (1) `position_group`
+filtering still happens in Python after the same ability-sorted cap, derived from
+`Player.positions[0]` which isn't trivially expressible as a SQL `WHERE` without
+duplicating `pipeline/features.py::_group`'s code->group mapping in SQL -- a
+specific position (most likely GK, which skews rare) could in principle be
+under-represented in the top-400-ability pool the same way names used to be; (2)
+the no-query browsing case still only ever shows the top 400 by ability with no
+pagination or total-count indicator, which is an intentional product choice, not a
+bug, but worth the project owner knowing it's still true.
+
+## Budget lowered from €1B back to €500M
+
+**What**: `config/game.py::BUDGET_EUR` is `500_000_000` again (was
+`1_000_000_000`, see "Budget raised from €500M to €1B" above). Updated everywhere
+that number was duplicated: `frontend/src/screens/BuildXI.tsx`'s local fallback
+constant, the three Playwright e2e specs that hardcode their own copy for
+client-side affordability simulation (`frontend/e2e/{batch-a,batch-b,full-session}
+.spec.ts`), `CLAUDE.md`'s one-line project summary, `docs/DESIGN.md` section 1's
+rules table, and `README.md` (the intro paragraph and the game-rules table; the
+real-data budget-sanity-check row in README's eval results table was left as its
+own explicitly-€1B-labelled historical measurement, flagged stale instead of
+silently rewritten, since re-measuring it needs the real dataset this sandbox
+currently can't reach).
+
+**Why**: explicit user instruction ("1 billion is too much").
+
+**Effect, measured not assumed**: re-ran `pipeline.pricing`'s budget sanity check
+against the synthetic world at the new €500M budget, using the *current* pricing
+curve (post Part 2 Step B/C's ability-score recalibration and
+`PRICING_ABILITY_WEIGHT`/`PRICING_MARKET_WEIGHT` reweight, both well after the
+original €500M→€1B raise above). Result: only 1 elite (top-2%-ability) player is
+affordable alongside 8 median starters at €500M now -- tighter than even the
+original pre-recalibration €500M measurement (~2), and well short of
+`docs/DESIGN.md` section 1's original "~3 elite + 8 good" target. The pricing
+curve itself was not touched or re-tuned; this is reported, not acted on, per the
+same "measure, don't assume" convention the original raise used -- the project
+owner may want the pricing curve re-tuned for €500M specifically, but that's a
+separate decision not requested here.

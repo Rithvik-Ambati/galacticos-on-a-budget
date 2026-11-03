@@ -1034,3 +1034,52 @@ answer quality but is the single least token-cheap case per the "why did we win"
 transcripts (judging from answer length) and would only need a `get_postmatch`/
 `get_session_state` call anyway -- it never appeared to call both. Worth re-checking
 against the re-run report if p95 is still over target.
+
+## Local live run: player-search bug found and fixed, budget lowered to €500M
+
+Ran the app for real (`make setup`'s SQLite/synthetic fallback -- the real-data
+host returned HTTP 403 from this sandbox both times it was tried) and drove it
+through the browser pane to give the project owner a working local link. Confirmed
+end-to-end: draw, scouting report, Build XI, player search, lineup validation all
+hit the real API through the real engine, not mocked.
+
+**Real bug found and fixed** while answering "why couldn't I find Virgil van Dijk
+or Arda Güler as PSG's opponent in Champions League mode": `GET /sessions/{id}
+/players/search` filtered by name *after* `load_candidate_pool`'s SQL-level
+`ORDER BY ability_score DESC LIMIT 400`, so any player outside the global top 400
+by ability could never be found by name no matter how exact the search text.
+Proved it against this session's own seeded data: two players named "Jude Diallo"
+exist (ability 68.9 and 13.2) and only the higher-ability one was ever
+returnable. Fixed in `pipeline/to_engine.py::load_candidate_pool` by pushing the
+name filter into the SQL `WHERE` clause, ahead of the limit -- see
+`docs/DECISIONS.md` "Player search silently dropped any player outside the global
+top-400-by-ability" for the full fix and what's still out of scope (position-group
+filtering has the same class of issue, not fixed; browsing without a search term
+still intentionally caps at the top 400). **Could not confirm this was actually
+what happened to Van Dijk/Güler specifically** -- real data isn't reachable in
+this sandbox, so the other candidate explanation (the "Affordable only" toggle,
+on by default, silently hiding anything over budget -- working as designed, not a
+bug) couldn't be ruled in or out either. The project owner should check both once
+real data loads: search with "Affordable only" off first (more likely culprit for
+two expensive real stars), then confirm the name-search fix separately with an
+affordable, lower-profile real player outside the likely top 400.
+
+**Budget lowered to €500M** per explicit instruction ("1 billion is too much") --
+see `docs/DECISIONS.md` "Budget lowered from €1B back to €500M" for the full list
+of files touched and the measured budget-sanity effect (tighter than before: only
+1 elite player now affords alongside 8 median starters in the synthetic world,
+down from ~2 at the original €500M and ~5 at €1B). Verified live via the real
+API (`budget_left_eur: 500000000` on a fresh session) and via the frontend
+top bar, not just by reading the changed constant.
+
+**How to verify**: `make lint && make typecheck && make test` (169 passed),
+`cd frontend && npx tsc --noEmit` (clean). Local link: `make api` +
+`cd frontend && npm run dev` (SQLite/synthetic fallback needs no Docker/API key --
+`make setup` first if `dev.db` doesn't exist yet).
+
+**Known issue**: real-data verification of both the search fix and the new budget
+is still pending -- this sandbox cannot reach `pub-e682...r2.dev` (HTTP 403, not a
+transient failure: retried once, same result; did not attempt to work around it
+with a spoofed User-Agent or similar, since that's bot-check circumvention). The
+project owner should re-run `python -m pipeline.download_real_data` from an
+environment that can reach it, then re-check the Van Dijk/Güler case directly.

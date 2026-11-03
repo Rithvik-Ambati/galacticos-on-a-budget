@@ -59,17 +59,24 @@ async def load_candidate_pool(
     *,
     exclude_ids: set[str] | None = None,
     position_group: str | None = None,
+    name_query: str | None = None,
     snapshot: str = "2026",
     limit: int = 400,
 ) -> list[PlayerCard]:
+    """`limit` is an ability-sorted cap, not a count of "all" players -- callers that
+    browse without a name (the optimizer's candidate pool, a UI slot with no search
+    text yet) get the top `limit` by ability, by design. `name_query`, when given, is
+    applied in SQL *before* that cap, not after: without it, a player outside the top
+    `limit` by ability could never be found by name, however exact the search text."""
     stmt = (
         select(Player, PlayerFeatures, PlayerStatsSeason, Price)
         .join(PlayerFeatures, PlayerFeatures.player_id == Player.player_id)
         .join(PlayerStatsSeason, PlayerStatsSeason.player_id == Player.player_id)
         .outerjoin(Price, (Price.player_id == Player.player_id) & (Price.tournament_snapshot == snapshot))
-        .order_by(PlayerFeatures.ability_score.desc())
-        .limit(limit)
     )
+    if name_query:
+        stmt = stmt.where(Player.name.ilike(f"%{name_query}%"))
+    stmt = stmt.order_by(PlayerFeatures.ability_score.desc()).limit(limit)
     rows = (await session.execute(stmt)).all()
     cards = [_to_player_card(*row) for row in rows]
     if exclude_ids:

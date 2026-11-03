@@ -13,7 +13,7 @@
 | Modes | World Cup (opponent = a national team's WC 2026 squad), Champions League (opponent = a club's UCL squad) |
 | Opponent | Assigned by a draw; the user does not choose |
 | Player pool | Every player in the database **except** the opponent's squad |
-| Budget | €1B, fixed for every match (raised from the original €500M — see docs/DECISIONS.md) |
+| Budget | €500M, fixed for every match (raised to €1B, then lowered back to €500M — see docs/DECISIONS.md) |
 | Nationality limit | Max 3 players from the same country |
 | Lineup | 11 players in one supported formation (4-3-3, 4-4-2, 4-2-3-1, 3-5-2, 3-4-3, 5-3-2) |
 | Opponent counter | Opponent responds using only its real squad; max 3 counter rounds |

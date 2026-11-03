@@ -7,7 +7,7 @@
 ## What it is
 
 You're assigned a real opponent — a real World Cup 2026 national squad or a real
-2025/26 Champions League club. Build an XI from anyone else on earth, under a €1B
+2025/26 Champions League club. Build an XI from anyone else on earth, under a €500M
 budget. A coach tells you exactly where your lineup breaks (weak zones, out-of-position
 picks, budget left on the table) and suggests legal swaps. The opponent counters back
 using its own real squad. Then you simulate the match and read a report on what
@@ -155,7 +155,7 @@ typecheck: `cd frontend && npx tsc --noEmit`.
 | Modes | World Cup (opponent = a national team's WC 2026 squad), Champions League (opponent = a club's UCL squad) |
 | Opponent | Assigned by a draw; you don't choose |
 | Player pool | Every player in the database **except** the opponent's squad |
-| Budget | €1B, fixed for every match |
+| Budget | €500M, fixed for every match |
 | Nationality limit | Max 3 players from the same country |
 | Lineup | 11 players in one supported formation (4-3-3, 4-4-2, 4-2-3-1, 3-5-2, 3-4-3, 5-3-2) |
 | Opponent counter | Opponent responds using only its real squad; max 3 counter rounds |
@@ -185,7 +185,7 @@ executed, it says so plainly instead of guessing.
 | Rating v2 vs. v1 backtest | **v2 does not beat v1** — correlation with actual goal margin 0.3409 vs. 0.3311 (v2 ahead), Brier score 0.2364 vs. 0.2284 (v2 behind); full numbers and method in `docs/DECISIONS.md` "Rating v2" | beats v1 on both axes |
 | Pricing model MAE (real data, held out) | **€3.17M**, 35.7% of mean real market value | documented |
 | Ability-score distribution (real data) | **4.1–96.5** (mean 49.6) — not collapsed to a constant | — (sanity check) |
-| Budget sanity check (real data, €1B) | A full top-ability XI of the 95 "elite" players **does fit** under €1B; ~20 elite players are affordable alongside 8 median starters | documented |
+| Budget sanity check (real data, €1B) | A full top-ability XI of the 95 "elite" players **does fit** under €1B; ~20 elite players are affordable alongside 8 median starters — **stale**: the budget was lowered to €500M after this ran; not yet re-measured against real data (`docs/DECISIONS.md`) | documented |
 | Real-data coverage | 4,755 players, 490 clubs, 48 national teams, 2,595 squad rows | — |
 
 Pricing MAE and the ability-score range are measured against the real Transfermarkt
