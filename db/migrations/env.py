@@ -18,6 +18,14 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# A hung network path to the DB (bad internal hostname, dropped connection)
+# otherwise blocks forever with zero output, since neither asyncio nor
+# asyncpg apply a connect timeout by default -- that turns into a silently
+# stuck container, and on Render a Deploying... that never finishes or
+# fails. Fail fast and loudly instead.
+CONNECT_TIMEOUT_SECONDS = 15
+OVERALL_TIMEOUT_SECONDS = 90
+
 
 def get_url() -> str:
     return get_settings().database_url
@@ -43,15 +51,22 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
     configuration["sqlalchemy.url"] = get_url()
-    connectable = async_engine_from_config(configuration, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    connect_args = {"timeout": CONNECT_TIMEOUT_SECONDS} if get_url().startswith("postgresql") else {}
+    connectable = async_engine_from_config(
+        configuration,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+        connect_args=connect_args,
+    )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
+    try:
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+    finally:
+        await connectable.dispose()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_migrations_online())
+    asyncio.run(asyncio.wait_for(run_migrations_online(), timeout=OVERALL_TIMEOUT_SECONDS))

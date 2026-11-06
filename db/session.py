@@ -14,10 +14,17 @@ from sqlalchemy.ext.asyncio import (
 
 from config.settings import get_settings
 
+# Neither asyncio nor asyncpg apply a connect timeout by default, so a
+# network-level hang (bad hostname, dropped route) otherwise blocks the
+# calling request forever instead of failing with a clear error.
+CONNECT_TIMEOUT_SECONDS = 10
+
 
 def make_engine(url: str | None = None) -> AsyncEngine:
     settings = get_settings()
-    return create_async_engine(url or settings.database_url, echo=False)
+    resolved_url = url or settings.database_url
+    connect_args = {"timeout": CONNECT_TIMEOUT_SECONDS} if resolved_url.startswith("postgresql") else {}
+    return create_async_engine(resolved_url, echo=False, connect_args=connect_args)
 
 
 _engine: AsyncEngine | None = None
