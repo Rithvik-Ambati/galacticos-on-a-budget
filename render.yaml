@@ -1,14 +1,22 @@
-# Render Blueprint for the fast, shareable demo link (Dockerfile.demo, not the
-# repo-root Dockerfile -- see that file's own header for the real Postgres+Redis
-# production setup this intentionally skips). docs/DECISIONS.md "Fast public demo
-# deployment" explains the trade-offs (synthetic data, stub LLM provider, SQLite,
-# no persistence across a cold start).
+# Render Blueprint for the fast, shareable DEMO link only (Dockerfile.demo, not
+# the repo-root Dockerfile -- see that file's own header for the real
+# Postgres+pgvector+Anthropic production setup this intentionally skips).
+# docs/DECISIONS.md "Fast public demo deployment" explains the trade-offs
+# (synthetic data, stub LLM provider, SQLite, no persistence across a cold
+# start).
+#
+# The real production service ("galacticos-on-a-budget") is NOT managed by
+# this file -- it was provisioned and is configured directly via the Render
+# API/dashboard (real Postgres with pgvector, real Anthropic LLM provider, the
+# repo-root Dockerfile). This blueprint is not linked to that service and
+# applying it will not touch it, but the demo service below still gets its own
+# distinct name to avoid any confusion between the two.
 #
 # To use: on Render's dashboard, "New +" -> "Blueprint", point it at this repo. No
 # other setup needed -- no database, no Redis, no secrets/env vars to fill in.
 services:
   - type: web
-    name: galacticos-on-a-budget
+    name: galacticos-on-a-budget-demo
     runtime: docker
     dockerfilePath: ./Dockerfile.demo
     plan: free
