@@ -15,6 +15,21 @@ class ChatMessage(TypedDict):
     content: str
 
 
+class ResumeMismatch(Exception):
+    """Raised when a graph node's resume payload doesn't match the interrupt it's
+    answering -- e.g. the API resumed the "decision" interrupt while the thread was
+    actually still paused at "lineup". Without this, the node's own `payload["key"]`
+    lookup raises a bare KeyError that reaches the client as an opaque 500 (or, from
+    inside chat()'s streaming generator, as a silently empty response), and leaves the
+    thread's checkpoint stuck needing a fresh session. api/routers.py catches this and
+    returns a 409 instead.
+    """
+
+    def __init__(self, expected: str, payload: dict[str, object]) -> None:
+        super().__init__(f"expected a resume payload for {expected!r}, got {payload!r}")
+        self.expected = expected
+
+
 class GameState(TypedDict, total=False):
     mode: str  # "wc" | "ucl"
     session_id: str

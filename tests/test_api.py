@@ -186,6 +186,39 @@ async def test_simulate_before_lock_in_is_409(client: httpx.AsyncClient) -> None
     assert r.status_code == 409
 
 
+async def test_resuming_the_wrong_interrupt_is_409_not_a_crash(client: httpx.AsyncClient) -> None:
+    """A session fresh off /draw is paused at the "lineup" interrupt (graph/nodes.py's
+    build()). Calling an endpoint that resumes a *different* interrupt -- decision or
+    chat, both still ahead of it -- used to hit a bare `payload["decision"]` /
+    `payload["question"]` KeyError inside the graph: a 500 from decision/chat/end, and
+    from chat specifically a 200 with a silently empty SSE body (the exception fires
+    inside the streaming generator, after headers are already sent). Both must now be
+    a clean 409 instead, and the thread must still be usable afterwards."""
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    r = await client.post(f"/sessions/{session_id}/draw")
+    assert r.json()["awaiting"] == "lineup"
+    opponent_team_id = r.json()["opponent_team_id"]
+
+    r = await client.post(f"/sessions/{session_id}/decision", json={"decision": "lock_in"})
+    assert r.status_code == 409
+
+    async with client.stream("POST", f"/sessions/{session_id}/chat", json={"question": "hi"}) as resp:
+        assert resp.status_code == 409
+
+    r = await client.post(f"/sessions/{session_id}/chat/end")
+    assert r.status_code == 409
+
+    # The thread itself must still be intact -- resuming at the right interrupt
+    # (lineup) now works fine, proving the mismatched resumes above didn't corrupt it.
+    assignments = await _build_optimal_assignments(opponent_team_id)
+    r = await client.post(
+        f"/sessions/{session_id}/lineup/analyse", json={"formation": "4-3-3", "assignments": assignments}
+    )
+    assert r.status_code == 200
+    assert r.json()["awaiting"] == "decision"
+
+
 async def test_rematch_pins_the_same_opponent_and_carries_the_lineup(client: httpx.AsyncClient) -> None:
     r = await client.post("/sessions", json={"mode": "wc"})
     session_id = r.json()["session_id"]

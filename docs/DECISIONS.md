@@ -1011,3 +1011,53 @@ curve itself was not touched or re-tuned; this is reported, not acted on, per th
 same "measure, don't assume" convention the original raise used -- the project
 owner may want the pricing curve re-tuned for €500M specifically, but that's a
 separate decision not requested here.
+
+## API endpoints that resume the LangGraph thread must check the pending interrupt before resuming, not after
+
+**What**: `api/routers.py`'s `/lineup/analyse`, `/decision`, `/chat`, and
+`/chat/end` -- the four endpoints that call `graph_.ainvoke(Command(resume=...))`
+-- each now call a new `_pending_awaiting(graph_, session_id)` helper first and
+return a 409 if it doesn't match what that endpoint is about to resume
+(`"lineup"` / `"decision"` / `"question"`). `graph/nodes.py`'s `build`,
+`user_decision`, and `chat` nodes also now raise a named `ResumeMismatch`
+(`graph/state.py`) instead of doing a bare `payload["key"]` lookup, as defense in
+depth, and the four endpoints catch it as a fallback 409.
+
+**Why**: found live, while verifying the Render deploy's chat endpoint by hand --
+calling `/chat` while the session's thread was still paused at the "lineup"
+interrupt (i.e. before `/lineup/analyse` had been called) threw an uncaught
+`KeyError` inside `graph/nodes.py`'s `chat()` node. From `/chat` specifically this
+surfaced as a silent `200 OK` with an empty SSE body: the exception fires inside
+`event_stream()`'s async generator, which only runs once FastAPI starts iterating
+it to send the response -- by then headers are already committed, so the error
+can't become a proper status code, and the client sees nothing happened.
+
+**Why checking first, not just catching the exception after**: a first attempt
+wrapped the `ainvoke(Command(resume=...))` calls in `try/except ResumeMismatch`
+and nothing else. A regression test proved this insufficient: once a mismatched
+`Command(resume=...)` reaches a node and that node raises *any* exception
+(`KeyError` or the new named one), LangGraph has already consumed the pending
+interrupt for that thread -- the task fails, and the thread is left unable to
+resume even a subsequent, correctly-shaped request. The only way to avoid
+corrupting the thread is to never send the mismatched resume into the graph in
+the first place.
+
+**Why `_pending_awaiting()` and not the existing `_awaiting()`/`_current_state()`
+helpers**: a first version of the pre-check used `_awaiting(_current_state(graph_,
+session_id))` and broke multiple legitimate flows (every test calling
+`/lineup/analyse` or `/decision` in the normal, correct order started failing with
+409s). Root cause: `_current_state()` returns `dict(snapshot.values)` from
+`graph_.get_state(config)`, but a direct introspection of this project's installed
+LangGraph (1.2.12) showed the pending interrupt lives on `snapshot.interrupts`,
+*not* inside `snapshot.values` -- `_awaiting()`'s `state.get("__interrupt__")`
+lookup only ever finds something when `state` is the dict `ainvoke()` itself
+returns (which does carry a `__interrupt__` pseudo-key), never on a `get_state()`
+snapshot's `.values`. `_current_state()`'s old docstring claimed it included
+`__interrupt__`; that was never true for this LangGraph version and nothing had
+exercised the combination until now. `_pending_awaiting()` reads
+`snapshot.interrupts[0].value` directly instead.
+
+**Not done**: the frontend doesn't currently have a way to trigger this out of
+normal use (its own flow always calls these endpoints in order), so this is a
+backend robustness fix for double-clicks/retries/race conditions and direct API
+use, not a response to an observed frontend bug.

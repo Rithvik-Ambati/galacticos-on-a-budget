@@ -28,7 +28,7 @@ from engine.rating import get_default_rating_model
 from engine.rules import validate_lineup
 from engine.schemas import Lineup, LineupAnalysis, PlayerCard
 from engine.simulation import simulate_match, simulate_two_legs
-from graph.state import GameState
+from graph.state import GameState, ResumeMismatch
 from llm.narrator import narrate_coach_report, narrate_match_report
 from llm.provider import get_provider
 from observability import traced_node, traced_span
@@ -142,6 +142,8 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
 
     async def build(state: GameState) -> dict[str, Any]:
         payload = interrupt({"awaiting": "lineup", "formation": state.get("formation", "4-3-3")})
+        if "assignments" not in payload:
+            raise ResumeMismatch("lineup", payload)
         return {
             "formation": payload.get("formation", state.get("formation", "4-3-3")),
             "lineup_assignments": payload["assignments"],
@@ -191,6 +193,8 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
 
     async def user_decision(state: GameState) -> dict[str, Any]:
         payload = interrupt({"awaiting": "decision", "round": state.get("counter_round", 0)})
+        if "decision" not in payload:
+            raise ResumeMismatch("decision", payload)
         return {"decision": payload["decision"]}
 
     def decision_router(state: GameState) -> str:
@@ -258,6 +262,8 @@ def make_nodes(engine: SAAsyncEngine, seed: int = 42) -> dict[str, Any]:
         payload = interrupt({"awaiting": "question"})
         if payload.get("end"):
             return {"_chat_ended": True}
+        if "question" not in payload:
+            raise ResumeMismatch("question", payload)
 
         question = payload["question"]
         with traced_span("node.chat", session_id=state.get("session_id"), input=question) as span:

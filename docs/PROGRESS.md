@@ -1083,3 +1083,82 @@ transient failure: retried once, same result; did not attempt to work around it
 with a spoofed User-Agent or similar, since that's bot-check circumvention). The
 project owner should re-run `python -m pipeline.download_real_data` from an
 environment that can reach it, then re-check the Van Dijk/Güler case directly.
+
+## Render deploy: live with real Postgres+pgvector and real Anthropic LLM, 3 deploy bugs + 1 crash bug found and fixed
+
+Deployed to Render for real (`https://galacticos-on-a-budget.onrender.com`) and
+verified end-to-end against the live service, not just that the container started.
+
+**Three deploy-blocking bugs found and fixed, each proven against the real Render
+deploy logs, not guessed**: (1) a bare `postgresql://` URL resolved to the sync
+`psycopg` dialect under `create_async_engine`, crashing with `ModuleNotFoundError:
+No module named 'psycopg'` -- fixed generally in `config/settings.py` with a
+`field_validator` that rewrites any `postgresql://`/`postgres://` URL to
+`postgresql+asyncpg://`, covering `DATABASE_URL` and `DATABASE_URL_READONLY` alike
+(`tests/test_settings.py`); (2) `db/migrations/versions/0001_initial_schema.py`
+hardcoded the database name `"gaffer"` in a `GRANT` and a weak literal password for
+the `gaffer_ro` role -- Render's actual auto-generated db name is `gaffer_072t`, and
+the hardcoded password was a secrets-in-code violation (CLAUDE.md rule 6). Fixed by
+deriving both the db name (`current_database()`) and the readonly role's
+username/password (`DATABASE_URL_READONLY` via `sqlalchemy.engine.make_url`) at
+migration runtime, with proper identifier/literal quoting, plus a defensive
+`RuntimeError` guard if the readonly role is ever misconfigured to equal the
+migrating (admin) role -- caught a near-miss where an earlier turn's env-var setup
+had actually done exactly that, which would have applied a 2s `statement_timeout`
+and read-only grants to the admin connection in production
+(`tests/test_migration_0001.py`); (3) a deploy sat on `update_in_progress` for 10+
+minutes with zero log output (previous failures all took ~1 minute) -- neither
+asyncio nor asyncpg apply a connect timeout by default, so a bad network path to
+Postgres hangs forever instead of raising. Fixed by adding an explicit asyncpg
+connect timeout to both the migration engine (`db/migrations/env.py`) and the app's
+main engine (`db/session.py`), plus an overall timeout around the whole migration
+run; validated by re-deploying and confirming the next attempt reached a terminal
+state in ~4 minutes instead of hanging.
+
+**Seeded the live database**: Render's one-off Job API needs a paid plan (blocked
+with `"new paid services not allowed"`), so -- with the project owner's explicit
+approval of this specific option over the alternatives -- temporarily added a
+single `/32` allow-list entry for the owner's own IP to the Postgres instance,
+ran `python -m pipeline.run_all` locally against the live external connection
+string, confirmed real counts landed (4,755 players, 490 clubs, 48 national teams),
+then reverted the allow-list back to empty immediately after.
+
+**Real bug found and fixed while verifying the live chat endpoint**:
+`graph/nodes.py`'s `build`/`user_decision`/`chat` nodes each did a bare
+`payload["key"]` lookup on whatever the graph's `interrupt()` call was resumed
+with, with no check that the resume actually matched the interrupt the thread was
+paused at. Calling `/chat` (or `/decision`) while the thread was still awaiting a
+different interrupt raised an uncaught `KeyError` -- from `/chat` specifically,
+this surfaced as a silent `200 OK` with an empty SSE body, since the exception
+fires inside the streaming generator after headers are already sent. Worse:
+simply catching the exception doesn't save the thread, since LangGraph consumes
+the interrupt as soon as `Command(resume=...)` reaches the node, regardless of
+whether the node subsequently raises -- confirmed by a regression test that first
+tried the except-only fix and found the thread permanently stuck afterward even on
+a correctly-shaped resume. The real fix has two parts: `api/routers.py`'s
+`/lineup/analyse`, `/decision`, `/chat`, and `/chat/end` endpoints now check
+`_pending_awaiting()` (reading `graph_.get_state(config).interrupts`, which is
+where LangGraph 1.2.12 actually keeps a pending interrupt -- not inside
+`snapshot.values`, which `_current_state()` only ever exposed) *before* calling
+`ainvoke(Command(resume=...))`, returning a clean 409 instead of ever sending a
+mismatched resume into the graph; the nodes themselves also now raise a named
+`ResumeMismatch` (`graph/state.py`) instead of a bare `KeyError`, as defense in
+depth. Covered by
+`tests/test_api.py::test_resuming_the_wrong_interrupt_is_409_not_a_crash`, which
+proves both the 409s and that the thread is still usable afterward.
+
+**How to verify**: `make lint && make typecheck && make test` (181 passed).
+Live: `GET https://galacticos-on-a-budget.onrender.com/health` reports
+`"data_source":"real"`; a full session (create → draw → search → lineup
+validate/analyse → decision lock_in → chat) was driven against the live API by
+hand and produced a genuinely reasoned LLM chat answer (it tested an actual swap
+via the real engine and correctly recommended against it for that fixture), not a
+stub response.
+
+**Known issue, pre-existing and already documented in code, not new**: one drawn
+opponent showed as `"Club 10625"` instead of a real name.
+`pipeline/real_source.py` lines 280-298 already explain why: clubs outside
+`competitions.csv`'s ~60-league coverage get a real-data placeholder, and if the
+player row's own `current_club_name` is also blank, it falls back to
+`f"Club {cid}"`. Not actioned here -- flagged to the project owner as a known,
+rare, already-reasoned-through tradeoff rather than a regression.

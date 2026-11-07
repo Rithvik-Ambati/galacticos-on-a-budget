@@ -44,6 +44,7 @@ from engine.rules import eligibility as engine_eligibility
 from engine.rules import validate_lineup
 from engine.schemas import Lineup, LineupAnalysis, ManOfTheMatch, PlayerCard, PostMatchAnalysis, SimulationResult
 from engine.team_profile import opponent_weak_zone, press_intensity
+from graph.state import ResumeMismatch
 from pipeline.to_engine import (
     load_candidate_pool,
     load_player_card,
@@ -69,12 +70,30 @@ def _awaiting(state: dict[str, Any]) -> str | None:
 
 
 def _current_state(graph_: Any, session_id: str) -> dict[str, Any]:
-    """The raw LangGraph state snapshot: GameState's own fields plus LangGraph's own
-    `__interrupt__` key, which doesn't belong in GameState (it's graph plumbing, not
-    game state) -- so this is deliberately `dict[str, Any]`, not `GameState`."""
+    """GameState's own fields as of the last completed step."""
     config = {"configurable": {"thread_id": session_id}}
     snapshot = graph_.get_state(config)
     return dict(snapshot.values)
+
+
+def _pending_awaiting(graph_: Any, session_id: str) -> str | None:
+    """The `awaiting` value of the interrupt this thread is currently paused at, or
+    None if it isn't paused at one. Unlike `_awaiting()` (which reads the `__interrupt__`
+    pseudo-key that `ainvoke()`'s own *return value* carries), a state snapshot from
+    `get_state()` keeps this on `snapshot.interrupts`, not inside `snapshot.values` --
+    confirmed via a standalone LangGraph 1.2.12 introspection, since `_current_state()`
+    only ever exposes `.values` and so can't answer this. Used as a guard *before*
+    resuming: once a mismatched resume reaches a node and it raises, LangGraph has
+    already consumed that interrupt and the thread is stuck needing a fresh session --
+    catching the exception after the fact is too late to save it, so the only real fix
+    is to never send the wrong resume in the first place.
+    """
+    config = {"configurable": {"thread_id": session_id}}
+    snapshot = graph_.get_state(config)
+    if not snapshot.interrupts:
+        return None
+    value = snapshot.interrupts[0].value
+    return value.get("awaiting") if isinstance(value, dict) else None
 
 
 async def _get_session_row(session: AsyncSession, session_id: str) -> GameSession:
@@ -289,9 +308,16 @@ async def analyse_lineup(
     pre_check = validate_lineup(lineup, opponent_ids)
     if not pre_check.valid:
         raise _problem(422, "lineup invalid", "; ".join(v.message for v in pre_check.violations))
+    if _pending_awaiting(graph_, session_id) != "lineup":
+        raise _problem(409, "not awaiting a lineup", "this session isn't waiting on a lineup submission right now")
 
     config = {"configurable": {"thread_id": session_id}}
-    new_state = await graph_.ainvoke(Command(resume={"formation": req.formation, "assignments": req.assignments}), config)
+    try:
+        new_state = await graph_.ainvoke(
+            Command(resume={"formation": req.formation, "assignments": req.assignments}), config
+        )
+    except ResumeMismatch as exc:
+        raise _problem(409, "not awaiting a lineup", str(exc)) from exc
     if new_state.get("analysis") is None:
         raise _problem(422, "lineup invalid", "the engine rejected this lineup")
 
@@ -307,8 +333,13 @@ async def decision(session_id: str, req: DecisionRequest, session: AsyncSession 
     if req.decision not in ("counter", "lock_in"):
         raise _problem(400, "invalid decision", "decision must be 'counter' or 'lock_in'")
     graph_ = get_graph()
+    if _pending_awaiting(graph_, session_id) != "decision":
+        raise _problem(409, "not awaiting a decision", "this session isn't waiting on a decision right now")
     config = {"configurable": {"thread_id": session_id}}
-    state = await graph_.ainvoke(Command(resume={"decision": req.decision}), config)
+    try:
+        state = await graph_.ainvoke(Command(resume={"decision": req.decision}), config)
+    except ResumeMismatch as exc:
+        raise _problem(409, "not awaiting a decision", str(exc)) from exc
 
     awaiting = _awaiting(state) or ""
     counter_history = state.get("counter_history", [])
@@ -344,11 +375,20 @@ async def simulate_endpoint(session_id: str) -> SimulateResponse:
 @router.post("/sessions/{session_id}/chat")
 async def chat(session_id: str, req: ChatRequest) -> StreamingResponse:
     graph_ = get_graph()
+    # Checked before the StreamingResponse is constructed (rather than inside
+    # event_stream itself) so a mismatched resume becomes a real 409 response. Once
+    # streaming starts, headers are already sent and an exception can only end the
+    # stream early -- it can't change the status code.
+    if _pending_awaiting(graph_, session_id) != "question":
+        raise _problem(409, "not awaiting a question", "this session hasn't reached the post-match chat stage yet")
     config = {"configurable": {"thread_id": session_id}}
+    try:
+        state = await graph_.ainvoke(Command(resume={"question": req.question}), config)
+    except ResumeMismatch as exc:
+        raise _problem(409, "not awaiting a question", str(exc)) from exc
+    answer = state["messages"][-1]["content"] if state.get("messages") else ""
 
     async def event_stream() -> AsyncIterator[str]:
-        state = await graph_.ainvoke(Command(resume={"question": req.question}), config)
-        answer = state["messages"][-1]["content"] if state.get("messages") else ""
         for word in answer.split(" "):
             yield f"data: {json.dumps({'token': word + ' '})}\n\n"
             await asyncio.sleep(0.02)
@@ -360,8 +400,13 @@ async def chat(session_id: str, req: ChatRequest) -> StreamingResponse:
 @router.post("/sessions/{session_id}/chat/end")
 async def end_chat(session_id: str) -> dict[str, bool]:
     graph_ = get_graph()
+    if _pending_awaiting(graph_, session_id) != "question":
+        raise _problem(409, "not awaiting a question", "this session hasn't reached the post-match chat stage yet")
     config = {"configurable": {"thread_id": session_id}}
-    await graph_.ainvoke(Command(resume={"end": True}), config)
+    try:
+        await graph_.ainvoke(Command(resume={"end": True}), config)
+    except ResumeMismatch as exc:
+        raise _problem(409, "not awaiting a question", str(exc)) from exc
     return {"ended": True}
 
 
