@@ -42,7 +42,10 @@ class DrawResponse(BaseModel):
 class ScoutingResponse(BaseModel):
     opponent_team_id: str
     attack_channels: dict[str, float]
-    press_intensity_ppda: float
+    # 0-100 derived score (engine.team_profile.press_intensity), not a literal PPDA
+    # (passes-per-defensive-action) count -- the old field name implied the latter and
+    # was mistaken for one while reading the raw API response during playtesting.
+    press_intensity: float
     crosses_per_match: float
     set_piece_threat: float
     aerial: float

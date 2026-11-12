@@ -21,10 +21,10 @@ export function Welcome({ onStart, busy }: Props) {
         </p>
       </div>
 
-      <div className="row" style={{ gap: 20 }}>
+      <div className="row" style={{ gap: 20, flexWrap: "wrap", justifyContent: "center" }}>
         <div
           className="card"
-          style={{ width: 280, borderColor: mode === "wc" ? "var(--green)" : undefined, cursor: "pointer" }}
+          style={{ width: 280, maxWidth: "100%", borderColor: mode === "wc" ? "var(--green)" : undefined, cursor: "pointer" }}
           onClick={() => setMode("wc")}
         >
           <div className="headline" style={{ fontSize: 26 }}>World Cup</div>
@@ -32,7 +32,7 @@ export function Welcome({ onStart, busy }: Props) {
         </div>
         <div
           className="card"
-          style={{ width: 280, borderColor: mode === "ucl" ? "var(--green)" : undefined, cursor: "pointer" }}
+          style={{ width: 280, maxWidth: "100%", borderColor: mode === "ucl" ? "var(--green)" : undefined, cursor: "pointer" }}
           onClick={() => setMode("ucl")}
         >
           <div className="headline" style={{ fontSize: 26 }}>Champions League</div>

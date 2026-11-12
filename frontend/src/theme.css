@@ -363,3 +363,26 @@ input[type="text"] {
     animation: none;
   }
 }
+
+/* A flex item's default min-width is "auto" (its content's own width), which is what
+   forced the page into a horizontal scrollbar instead of shrinking -- found live
+   (friend playtesting at ~690-900px widths): the mode-select cards and the Build XI
+   screen's 3-column layout (search / pitch / Starting XI) never gave anything up. */
+.row,
+.col {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .build-xi-layout {
+    flex-wrap: wrap;
+  }
+  .build-xi-layout > * {
+    width: 100% !important;
+    max-width: 100%;
+  }
+  .build-xi-pitch {
+    order: -1; /* pitch above the two list panels, per the reported fix */
+  }
+}
+

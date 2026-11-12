@@ -212,12 +212,12 @@ async def scout(session_id: str, session: AsyncSession = Depends(get_session)) -
     return ScoutingResponse(
         opponent_team_id=opponent_team_id,
         attack_channels=profile.attack_channels,
-        press_intensity_ppda=round(press_intensity(profile.ppda), 1),
+        press_intensity=round(press_intensity(profile.ppda), 1),
         crosses_per_match=profile.crosses_per_match,
         set_piece_threat=profile.set_piece_threat,
         aerial=profile.aerial,
         danger_players=[dp.model_dump() for dp in profile.danger_players],
-        weak_zone=opponent_weak_zone(squad),
+        weak_zone=opponent_weak_zone(squad, tournament_label="UCL" if state.get("mode") == "ucl" else "league"),
         opponent_formation=opponent_formation,
         opponent_lineup=opponent_lineup,
         lineup_source=state.get("opponent_lineup_source", "estimated"),
@@ -231,6 +231,8 @@ async def search_players(
     q: str = Query(default=""),
     position_group: str | None = Query(default=None),
     slot_id: str | None = Query(default=None),
+    formation: str | None = Query(default=None),
+    assignments: str | None = Query(default=None),
     max_price_eur: int | None = Query(default=None),
     limit: int = Query(default=30, le=100),
     session: AsyncSession = Depends(get_session),
@@ -250,13 +252,33 @@ async def search_players(
         pool = [p for p in pool if p.price_eur <= max_price_eur]
     pool = pool[:limit]
 
-    formation = state.get("formation", "4-3-3")
+    # formation/assignments reflect the builder screen's *in-progress* picks (not yet
+    # submitted to /lineup/analyse), passed straight from the client -- falling back to
+    # the graph's last-saved state (empty/"4-3-3" before the first analyse) only when
+    # the caller doesn't supply them. Without this, eligibility was always checked
+    # against the stale saved formation: every slot id that doesn't exist in that
+    # formation (e.g. "DM1" while mid-build on 4-2-3-1, but the saved formation is
+    # still "4-3-3") made slot_by_id() raise for every single candidate, so nothing in
+    # the builder for any formation other than 4-3-3 was ever clickable.
+    assignment_ids: dict[str, str] = {}
+    if assignments:
+        try:
+            parsed = json.loads(assignments)
+        except ValueError as exc:
+            raise _problem(400, "invalid assignments", "assignments must be a JSON object of slot_id to player_id") from exc
+        if not isinstance(parsed, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in parsed.items()):
+            raise _problem(400, "invalid assignments", "assignments must be a JSON object of slot_id to player_id")
+        assignment_ids = parsed
+    else:
+        assignment_ids = state.get("lineup_assignments", {})
+    resolved_formation = formation or state.get("formation", "4-3-3")
+
     cards = {}
-    for sid, pid in state.get("lineup_assignments", {}).items():
+    for sid, pid in assignment_ids.items():
         card = await load_player_card(session, pid)
         if card is not None:
             cards[sid] = card
-    lineup = Lineup(formation=formation, assignments=cards)
+    lineup = Lineup(formation=resolved_formation, assignments=cards)
 
     results = [
         PlayerSearchResult(player=p, eligibility=engine_eligibility(p, lineup, opponent_ids, slot_id=slot_id))

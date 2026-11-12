@@ -1161,4 +1161,172 @@ opponent showed as `"Club 10625"` instead of a real name.
 `competitions.csv`'s ~60-league coverage get a real-data placeholder, and if the
 player row's own `current_club_name` is also blank, it falls back to
 `f"Club {cid}"`. Not actioned here -- flagged to the project owner as a known,
-rare, already-reasoned-through tradeoff rather than a regression.
+rare, already-reasoned-through tradeoff rather than a regression. (Fixed properly
+below, once the real missing names turned out to be findable in the same dataset.)
+
+## Friend playtesting the live deploy: 1 game-breaking bug + 7 real bugs found and fixed
+
+The project owner shared a friend's full writeup after playtesting the live Render
+deployment (both modes) and probing the backend API directly (~100 player
+searches). Each item below was independently investigated against the actual
+code/data before being accepted as real, same convention as every other fix in
+this doc.
+
+**Game-breaking, fixed first**: in the Build XI screen, clicking a player for any
+formation other than 4-3-3 did nothing -- "for anything except the 4-3-3" was the
+friend's exact description, confirmed for both 4-2-3-1 and 3-5-2. Root cause:
+`GET /players/search` evaluated eligibility (`engine/rules.py::eligibility`,
+specifically its `slot_by_id(lineup.formation, slot_id)` call) against the
+**graph's saved** `formation`/`lineup_assignments` -- which stays `"4-3-3"`/empty
+until the first `/lineup/analyse` succeeds -- not the client's current
+in-progress picks. A slot id that only exists in the formation the user is
+*actually* building (e.g. 4-2-3-1's `"DM1"`) made `slot_by_id` raise for every
+single candidate, greying out the whole list. Fixed by having the client pass its
+own live `formation`/`assignments` (JSON-encoded) to `/players/search`, used in
+preference to the saved graph state; falls back to the old behavior if omitted,
+so no other caller breaks. Verified live in a real browser (not just via the API)
+for both 4-2-3-1 and 3-5-2 -- a player now assigns correctly and the budget/
+nationality panel updates. `tests/test_api.py::
+test_player_search_eligibility_uses_the_clients_in_progress_formation` reproduces
+the exact original bug (omit `formation` -> everyone ineligible) alongside the fix.
+
+**Search was accent-sensitive, in both directions**: "Odegaard", "Dembele",
+"Gyokeres", "Yildiz" and others returned nothing because the stored names are
+"Ødegaard", "Dembélé", "Gyökeres", "Yıldız"; conversely, searching the *accented*
+"Vinícius" found nothing because the stored name is "Vinicius Junior" (no
+accent). `pipeline/to_engine.py::load_candidate_pool` used a plain SQL
+`Player.name.ilike(...)`, which isn't accent-insensitive in either SQLite (dev/
+test) or Postgres (prod) without a stored normalized column. Fixed with a new
+`normalize_name()` (NFKD decomposition + an explicit fold table for letters NFKD
+doesn't reduce: ø, ı, ß, đ, æ, þ, ł) applied to both the stored name and the
+search text; the name match now happens in Python against a cheap
+`player_id, name` scan (not the detailed joined query), still *before* the
+ability-sorted cap, so a player outside the top 400 by ability remains findable
+by name -- the exact guarantee the previous fix in this area already relied on.
+Also fixed in the same pass: exact/prefix matches now sort ahead of mere
+substring matches (`_match_rank`), so searching "Rodri" surfaces Rodri himself
+ahead of "Rodrigo Zalazar" instead of sorting hits by ability alone.
+`tests/test_name_normalize.py` (new).
+
+**3 of 36 real UCL clubs showed as a bare "Club {id}"**: Kairat Almaty (10482),
+Qarabağ FK (10625), and Pafos FC (45457) -- newer/smaller-league debutants whose
+`players.csv` `current_club_name` field is blank on every one of their players,
+not just some. Fixed the same way the earlier "5 missing WC2026 teams" bug was:
+`games.csv.gz`'s own `home_club_name`/`away_club_name` already has the real name
+for every UCL game these clubs played, so `_load_games_team_sets` now also
+captures a `ucl_club_names` map from the same scan it already does for WC team
+names, tried before the `current_club_name` fallback. Real data, not a guess --
+confirmed by finding exactly these 3 names and no others missing.
+`tests/test_real_source.py` extended to cover it.
+
+**Opponent badge showed the wrong fragment of the name**: `opponentName.slice(0,
+3)` took the first 3 *characters* of the full name, so "SSC Napoli" -> "SSC" and
+"Club Brugge" -> "CLU" (the generic legal-form prefix, not anything
+identifying). New `frontend/src/clubCode.ts::clubShortCode` drops common
+legal-form tokens (FC, SSC, AC, Club, ...) first, then takes initials of the
+remaining significant words -- "SSC Napoli" -> "NAP", "Club Brugge" -> "BRU",
+unaffected single-word names (most national teams) are unchanged.
+
+**Role fit showed nonsense for roles nowhere near a player's actual game**: a
+goalkeeper rated 58 as a "poacher" (off 1.2 shots/90), and Salah scored *higher*
+as a "ball-playing CB" (86) than as a winger (81). Each role-fit number is a
+percentile computed *within the player's own position-group peer set*
+(`pipeline/features.py`), so a GK's "poacher" score is really just his shots/90
+rank among other GKs -- a real rank, but zero actual signal for center-forward
+play. `engine/rating.py::role_fit_score` was already scoped correctly (it only
+ever looks up the 1-2 templates relevant to the *slot* being filled, and the
+optimizer/counter-engine both already pre-filter candidates to the slot's
+`position_group` before calling it) -- so this never affected a swap suggestion
+or the optimizer, only the raw `role_fit` dict shown via `/players/search` and,
+more importantly, fed straight into `pipeline/documents.py`'s player-profile
+text (`best_role = max(role_fit.items(), ...)`), which the chat RAG pipeline
+retrieves into real LLM answers. Fixed by restricting `compute_role_fit()` to
+only the roles plausible for the player's `position_group`
+(`ROLE_FIT_ALLOWED_ROLES_BY_GROUP`, derived from `engine.rating`'s own
+position_code -> role-template mapping so the two can't drift apart) -- a GK now
+gets no role_fit entries at all (honest: no outfield role template applies), and
+an out-of-position lookup correctly falls back to the player's plain
+`ability_score`, which `role_fit_score()` already did for a missing key.
+
+**A 1-point gap was called a "clear weakness"**: Napoli's right side (49) against
+a 50 average was flagged as a tactical opening. Ability scores are themselves a
+percentile rank (noisy at the margin), so a 1-point gap is sampling variance, not
+a real one. Added `config.game.WEAK_ZONE_MIN_GAP = 10.0` and changed
+`engine/team_profile.py::opponent_weak_zone`'s comparison from a bare `<` to
+requiring at least that gap. Same function also hardcoded "league average" in its
+description even in UCL mode, where the opponent isn't a domestic-league side at
+all -- added a `tournament_label` parameter, `/scout` now passes `"UCL"` when
+`state["mode"] == "ucl"`. Both verified live in a real browser (a genuine 51-vs-50
+gap now correctly shows "No clear weakness"). `tests/test_team_profile.py`
+extended with both cases.
+
+**API field name implied a literal PPDA count it never was**:
+`press_intensity_ppda` is a 0-100 *derived* score
+(`engine.team_profile.press_intensity`), not literal passes-per-defensive-action
+units (realistically 8-20) -- reading the raw field name while probing the API
+directly, the friend reasonably expected the latter and reported the math as
+"inverted or wrongly scaled" when it wasn't; the frontend's own label ("Press
+intensity N/100") was already correct, only the field name was misleading.
+Renamed to `press_intensity` throughout (`api/schemas.py`, `api/routers.py`,
+`frontend/src/types.ts`, `Scouting.tsx`) -- no test referenced the old name.
+
+**Layout broke under ~900px width**: the mode-select cards (Welcome.tsx) had no
+`flex-wrap` and spilled off screen around 690px; the Build XI screen's 3-column
+layout (search / pitch / Starting XI) had no `min-width: 0` on its flex items, so
+instead of shrinking it forced a horizontal scrollbar and cut off the Starting
+XI panel. Fixed with a global `.row, .col { min-width: 0; }` reset plus a
+`max-width: 900px` media query that stacks Build XI's 3 columns to full width
+(pitch first, via `order: -1`) and lets the mode cards wrap.
+
+**Investigated and NOT changed, each for a specific reason**:
+- Ratings (90-91 for backup-tier GKs like Atubolu/Vicario) badly decoupled from
+  price (their market value, €10-24M) -- real, but `config.game.PRICING_MARKET_WEIGHT
+  = 0.9` / `PRICING_ABILITY_WEIGHT = 0.1` is a previously deliberate, measured
+  design decision (see "Part 2 Step C: pricing reweight applied" below), not an
+  oversight. Re-tuning it needs the same real-data budget-sanity measurement
+  rigor that decision used, which wasn't attempted in this pass. Flagged to the
+  project owner as the single biggest remaining gameplay-balance question.
+- xG/xA are set equal to goals/assists (`pipeline/real_source.py:462-463`,
+  already commented "approximation") -- the real Transfermarkt export this
+  project uses has no actual xG/xA columns at all; this is a known, pre-existing
+  data-source limit, not a new bug, and nothing else to fall back on exists in
+  the dataset.
+- Low-confidence players (0.4) showing an ability score of 45-52 with an empty
+  role_fit and a genuine 0% pass completion -- exactly
+  `pipeline/features.py::_fallback_ability`'s documented low-coverage path
+  (`LOW_COVERAGE_CONFIDENCE`), working as designed for a player with almost no
+  recorded stats, not a bug.
+- One player ("Pépé") reportedly showing nationality "Unknown" -- spot-checked
+  Nicolas Pépé's raw record directly (`country_of_citizenship: "Cote d'Ivoire"`,
+  correctly ingested) and couldn't reproduce against the live API or current
+  `data_raw/`; likely either a different same-named player or a player who isn't
+  in the current season's candidate pool at all (filtered out, not mislabeled).
+  Not pursued further given the low stakes of one nationality field.
+- "Sort recommended players by value, not what looks like random order" -- not
+  implemented. Search is now sorted by match-quality then ability (see above),
+  but no "value" (rating per euro) sort mode exists yet; would need a UI toggle,
+  scoped as a follow-up, not attempted here.
+- The friend's "Moneyball score", daily seeded opponent + leaderboard, nickname-
+  aware autocomplete (Vini/KDB/Kvara), and an explicit stated fatigue rule for
+  UCL's two legs are all real feature suggestions, not bugs -- logged here as a
+  backlog, not implemented in this pass.
+
+**Answered, not a bug**: whether CL and WC draw from the same player pool --
+yes, by design. `pipeline/real_source.py`'s `candidate_rows` filter
+(`in_wc_squad or in_ucl_lineup or in_ucl_club or in_big5`) builds one global,
+mode-agnostic buildable pool; only the *opponent* (national team vs. club squad)
+differs per mode, matching the game's own pitch ("build an XI from anyone else
+on earth").
+
+**How to verify**: `make lint && make typecheck && make test` (183 passed +
+15 passed in the 2 new test files already counted in that total),
+`cd frontend && npx tsc --noEmit && npm run build` (clean). Formation-slot fix
+and the weak-zone/press-intensity fixes were additionally driven by hand in a
+real browser (`make api` + `make web`, SQLite/synthetic, after temporarily
+moving `.env` aside so the local run doesn't need the live Postgres) -- not just
+asserted via tests.
+
+**Known issue, still open**: the price/rating decoupling above remains the
+single biggest reported gameplay-balance problem and needs a deliberate product
+decision (how much of price should track ability vs. real market value), not a
+quick code fix.

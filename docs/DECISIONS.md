@@ -1061,3 +1061,96 @@ exercised the combination until now. `_pending_awaiting()` reads
 normal use (its own flow always calls these endpoints in order), so this is a
 backend robustness fix for double-clicks/retries/race conditions and direct API
 use, not a response to an observed frontend bug.
+
+## Player-search eligibility reads the client's live formation/assignments, not the graph's saved state
+
+**What**: `GET /sessions/{id}/players/search` now accepts optional `formation`
+and `assignments` (JSON-encoded `{slot_id: player_id}`) query params. When given,
+they're used to build the `Lineup` passed into `engine.rules.eligibility()`
+instead of the LangGraph thread's saved `state["formation"]`/
+`state["lineup_assignments"]`. The frontend's `BuildXI.tsx` now sends its own
+live, not-yet-submitted `formation`/`assignments` on every search.
+
+**Why**: found live (friend playtesting): building in any formation other than
+4-3-3 meant no player in the search results was ever clickable. The saved graph
+state only gets a real `formation`/`lineup_assignments` once `/lineup/analyse`
+has succeeded at least once -- before that (the entire normal course of
+building a first lineup), it defaults to `"4-3-3"`/empty. `eligibility()` calls
+`engine.rules.slot_by_id(lineup.formation, slot_id)` for whatever slot the user
+is currently filling; a slot id that only exists in the formation actually being
+built (e.g. 4-2-3-1's `"DM1"`, which isn't a 4-3-3 slot at all) made that raise
+for every single candidate, each caught and turned into an "ineligible" result --
+so every result in the list showed as un-clickable, for every formation except
+the one that happens to share slot ids with the stale default.
+
+**Why not instead just update the graph state earlier (e.g. on formation
+change)**: that would mean a network round-trip per formation click just to keep
+search eligibility accurate, and still wouldn't reflect the user's *in-progress,
+unsaved* player picks between search keystrokes (budget-left and nationality-
+count eligibility need those too, not just the formation). Passing the client's
+current state directly on each search call keeps it accurate at every step
+without adding a resume to the graph for what is, from the graph's perspective,
+not actually a decision point yet.
+
+**Backward compatible**: both params are optional and fall back to the old
+graph-state behavior when omitted, so no other caller needed to change.
+
+## Player search became accent-insensitive by matching in Python, not a smarter SQL `ilike`
+
+**What**: `pipeline/to_engine.py::load_candidate_pool`'s name filter no longer
+compiles to `Player.name.ilike(f"%{name_query}%")`. When a name query is given,
+it first runs a cheap `select(Player.player_id, Player.name)` over every player
+and filters in Python using a new `normalize_name()` (case-fold + NFKD
+decomposition + strip combining marks + an explicit fold table for the letters
+NFKD doesn't reduce: ø, ı, ß, đ, æ, þ, ł), applied to both the stored name and
+the query text. Matches are then ranked exact-before-prefix-before-contains
+(`_match_rank`) before the detailed joined query re-fetches full `PlayerCard`s
+for just those ids and re-sorts by `(match_rank, -ability_score)`.
+
+**Why**: found live (friend playtesting + ~100 direct API searches): "Odegaard",
+"Dembele", "Gyokeres", "Yildiz" and others returned nothing because the stored
+names are "Ødegaard", "Dembélé", "Gyökeres", "Yıldız" -- nobody types those accents
+on a phone. It also broke in the *other* direction: searching the accented
+"Vinícius" found nothing because the stored name is "Vinicius Junior" (no accent
+at all). A plain SQL `ilike` can't fix this portably: Postgres has an `unaccent`
+extension, but this project also runs on SQLite for dev/test (CLAUDE.md's stack
+list), which has no equivalent, and the two paths would then need separate tests
+exercising genuinely different logic.
+
+**Why this doesn't reopen the earlier "top-400-by-ability" bug**: the previous
+fix in this area (`docs/DECISIONS.md` "Player search silently dropped any player
+outside the global top-400-by-ability") established that a name filter must
+apply *before* the ability-sorted cap, not after -- an unrelated player outside
+the top 400 must still be findable by exact name. The new Python-side match
+still happens before any `limit` is applied (it scans every player's id+name,
+not a capped pool), so that guarantee holds; only the *order* of the final
+(already name-filtered, necessarily small) result set changed, from
+ability-only to match-quality-then-ability.
+
+**Cost accepted**: a name search now costs two round trips (an id+name scan,
+then the detailed query) instead of one, and the id+name scan reads every player
+row. At this dataset's real scale (~4,755 players, two small columns, no joins)
+this is sub-millisecond in practice and not a concern; a stored normalized-name
+column (as originally suggested) would avoid even that, but needs a migration
+and a backfill of existing data, which this fix deliberately avoided taking on
+in the same pass as a live, friends-waiting bug fix.
+
+## 3 UCL clubs' real names came from games.csv.gz, the same source used for the earlier missing-WC2026-teams fix
+
+**What**: `pipeline/real_source.py::_load_games_team_sets` now also returns
+`ucl_club_names: dict[str, str]`, built from the same `games.csv.gz` scan it
+already does for `wc_team_names` -- `home_club_name`/`away_club_name` on any row
+where `competition_id == "CL"` and `season == "2025"`. `generate()`'s existing
+"club not in clubs.csv, give it a real-data placeholder" fallback now tries
+`ucl_club_names.get(cid)` before `current_club_name`, before the `f"Club {cid}"`
+last resort.
+
+**Why**: found live (friend playtesting): one opponent drew as "Club 10625".
+`pipeline/real_source.py`'s own pre-existing comment already named this exact
+scenario as a known gap (3 of 36 real UCL clubs have a blank
+`current_club_name` on every one of their players) -- but had no real-data
+fallback for it, only the bare id. Checked `games.csv.gz` directly for the 3
+affected club ids and found all 3 real names present: Kairat Almaty (10482),
+Qarabağ FK (10625), Pafos FC (45457) -- exactly the same file and the same
+technique ("use the one other place this id's real name already appears") as
+the earlier "5 missing WC2026 teams" fix, not a hardcoded lookup table.

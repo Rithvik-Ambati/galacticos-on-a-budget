@@ -63,13 +63,50 @@ def _per90(stats: PlayerStatsSeason) -> dict[str, float]:
     }
 
 
-def compute_role_fit(percentiles: dict[str, float]) -> dict[str, float]:
+def _role_fit_allowed_roles_by_group() -> dict[str, set[str]]:
+    """Which of ROLE_FIT_FORMULAS' roles are even meaningful for each position_group,
+    derived from engine/rating.py's own position_code -> role-template mapping (the
+    same one role_fit_score() uses to pick a slot's relevant roles) so the two can
+    never drift apart. A role not in a group's set is skipped entirely in
+    compute_role_fit() below, rather than computed from a peer group it has no real
+    signal in."""
+    from engine.rating import ROLE_TEMPLATE_BY_POSITION  # local import: pipeline -> engine is fine, avoids a cycle
+
+    allowed: dict[str, set[str]] = {"GK": set(), "DF": set(), "MF": set(), "FW": set()}
+    for code, templates in ROLE_TEMPLATE_BY_POSITION.items():
+        if code in {"LB", "CB", "RB", "LWB", "RWB"}:
+            group = "DF"
+        elif code in {"DM", "CM", "AM", "LM", "RM"}:
+            group = "MF"
+        else:
+            group = "FW"
+        allowed[group].update(templates)
+    return allowed
+
+
+ROLE_FIT_ALLOWED_ROLES_BY_GROUP = _role_fit_allowed_roles_by_group()
+
+
+def compute_role_fit(percentiles: dict[str, float], position_group: str) -> dict[str, float]:
     """role_percentiles (persisted) -> role fit scores (derived on demand, not stored —
-    there's no dedicated column for it; see docs/PROGRESS.md Phase 2 notes)."""
+    there's no dedicated column for it; see docs/PROGRESS.md Phase 2 notes).
+
+    Restricted to roles plausible for `position_group` -- found live (a friend
+    playtesting the real deployment): a goalkeeper rated 58 as a "poacher" off 1.2
+    shots per 90, and Salah scoring higher as a "ball-playing CB" (86) than as a
+    winger (81). Both came from ranking a percentile (shots_per90, pass_completion,
+    ...) within a peer group the role was never meant to be evaluated against --
+    the rank is real, but it isn't *signal* for that role. role_fit_score() in
+    engine/rating.py already falls back to the player's plain ability_score when a
+    role key is missing, so omitting an inapplicable role here is a clean no-op for
+    every caller, not a behavior change for the roles that matter."""
     if not percentiles:
         return {}
+    allowed = ROLE_FIT_ALLOWED_ROLES_BY_GROUP.get(position_group, set())
     role_fit = {}
     for role, weights in ROLE_FIT_FORMULAS.items():
+        if role not in allowed:
+            continue
         total_weight = sum(weights.values())
         score = sum(percentiles.get(key, 50.0) * w for key, w in weights.items()) / total_weight
         role_fit[role] = round(score, 1)

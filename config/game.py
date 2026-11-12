@@ -237,6 +237,14 @@ WEAKNESS_THRESHOLDS: dict[str, float] = {
 # threshold, not just a missing-data fallback.
 LEAGUE_AVERAGE_ABILITY_SCORE: float = 50.0
 
+# How far below LEAGUE_AVERAGE_ABILITY_SCORE a zone's strength must fall before
+# engine/team_profile.py::opponent_weak_zone calls it a "clear weakness" -- found live
+# (friend playtesting): a zone rated 49 against a 50 average was flagged as one, which
+# is noise, not a real opening. Ability scores are themselves derived from a
+# within-position percentile rank (pipeline/features.py), so single-point gaps are
+# expected sampling variance, not a meaningful gap in squad quality.
+WEAK_ZONE_MIN_GAP: float = 10.0
+
 # engine/strengths.py mirrors engine/weaknesses.py's WEAKNESS_THRESHOLDS: the minimum
 # margin (user strength minus opponent threat, or role-fit above baseline) before a
 # zone/role counts as a genuine strength worth telling the user about.

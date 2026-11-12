@@ -128,7 +128,7 @@ export interface OpponentWeakZone {
 export interface ScoutingResponse {
   opponent_team_id: string;
   attack_channels: Record<string, number>;
-  press_intensity_ppda: number;
+  press_intensity: number;
   crosses_per_match: number;
   set_piece_threat: number;
   aerial: number;

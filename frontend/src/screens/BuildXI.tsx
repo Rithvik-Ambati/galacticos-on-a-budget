@@ -56,6 +56,8 @@ export function BuildXI({
         q: query,
         position_group: activeGroup,
         slot_id: activeSlot ?? undefined,
+        formation,
+        assignments,
         maxPriceEur: affordableOnly ? affordableCap : undefined,
         limit: 25,
       })
@@ -70,7 +72,7 @@ export function BuildXI({
       })
       .catch(() => setResults([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, query, activeSlot, formation, affordableOnly, affordableCap]);
+  }, [sessionId, query, activeSlot, formation, assignments, affordableOnly, affordableCap]);
 
   useEffect(() => {
     if (Object.keys(assignments).length === 0) {
@@ -156,7 +158,7 @@ export function BuildXI({
         </div>
       )}
 
-      <div className="row" style={{ alignItems: "flex-start", gap: 18 }}>
+      <div className="row build-xi-layout" style={{ alignItems: "flex-start", gap: 18 }}>
         <div className="card col" style={{ width: 320, maxHeight: 620, overflowY: "auto" }}>
           <input
             type="text"
@@ -205,7 +207,7 @@ export function BuildXI({
           </div>
         </div>
 
-        <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+        <div className="build-xi-pitch" style={{ flex: 1, display: "flex", justifyContent: "center" }}>
           <Pitch formation={formation} assignments={pitchAssignments} onSlotClick={(slot) => setActiveSlot(slot.id)} />
         </div>
 

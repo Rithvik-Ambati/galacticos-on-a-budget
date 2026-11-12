@@ -13,7 +13,7 @@ export function Scouting({ opponentName, scouting, onContinue }: Props) {
       <div className="spread">
         <div>
           <h2>Scouting Report — {opponentName}</h2>
-          <div className="text-dim2">Press intensity {scouting.press_intensity_ppda}/100</div>
+          <div className="text-dim2">Press intensity {scouting.press_intensity}/100</div>
         </div>
         <button className="btn btn-primary" onClick={onContinue}>
           Build Your XI →

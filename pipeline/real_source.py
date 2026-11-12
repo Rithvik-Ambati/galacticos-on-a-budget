@@ -120,18 +120,23 @@ def _load_competitions(data_dir: str) -> tuple[dict[str, str], dict[str, str]]:
 
 def _load_games_team_sets(
     data_dir: str,
-) -> tuple[set[str], set[str], set[str], set[str], dict[str, str]]:
+) -> tuple[set[str], set[str], set[str], set[str], dict[str, str], dict[str, str]]:
     """(wc2026_game_ids, wc2026_team_ids, ucl2025_26_game_ids, ucl2025_26_club_ids,
-    wc2026_team_names). The last is games.csv.gz's own `home_club_name`/
-    `away_club_name` for each WC2026 team_id -- real, not guessed, and the only
-    source of a name for a team that played real WC2026 matches but has no row
-    in national_teams.csv.gz (that reference table doesn't cover every FIFA
-    member federation; see the fallback in generate())."""
+    wc2026_team_names, ucl2025_26_club_names). The name dicts are games.csv.gz's own
+    `home_club_name`/`away_club_name` -- real, not guessed. wc2026_team_names is the
+    only source of a name for a WC2026 team with no row in national_teams.csv.gz (that
+    reference table doesn't cover every FIFA member federation; see the fallback in
+    generate()). ucl2025_26_club_names is likewise the only real-data source of a name
+    for a UCL club clubs.csv has no row for *and* whose players.csv `current_club_name`
+    field is also blank -- found to be exactly 3 of the 36 real UCL 2025/26 clubs
+    (Kairat Almaty, Qarabağ FK, Pafos FC: all newer/smaller-league debutants), which
+    otherwise displayed as a bare "Club {id}" (see the fallback in generate())."""
     wc_game_ids: set[str] = set()
     wc_team_ids: set[str] = set()
     ucl_game_ids: set[str] = set()
     ucl_club_ids: set[str] = set()
     wc_team_names: dict[str, str] = {}
+    ucl_club_names: dict[str, str] = {}
     with _open(data_dir, "games.csv.gz") as f:
         for row in csv.DictReader(f):
             if row["competition_id"] == "FIWC" and row["season"] == "2025":
@@ -144,7 +149,11 @@ def _load_games_team_sets(
                 ucl_game_ids.add(row["game_id"])
                 ucl_club_ids.add(row["home_club_id"])
                 ucl_club_ids.add(row["away_club_id"])
-    return wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names
+                if row["home_club_name"]:
+                    ucl_club_names[row["home_club_id"]] = row["home_club_name"]
+                if row["away_club_name"]:
+                    ucl_club_names[row["away_club_id"]] = row["away_club_name"]
+    return wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names, ucl_club_names
 
 
 def _load_starting_lineup_frequency(
@@ -214,7 +223,7 @@ def generate(seed: int | None = None, data_dir: str = DEFAULT_DATA_DIR) -> Synth
         )
 
     competition_countries, competition_names = _load_competitions(data_dir)
-    wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names = _load_games_team_sets(data_dir)
+    wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names, ucl_club_names = _load_games_team_sets(data_dir)
     wc_squads_by_team = _load_lineup_squads(data_dir, wc_game_ids)
     wc_squad_player_ids: set[str] = set().union(*wc_squads_by_team.values()) if wc_squads_by_team else set()
     ucl_lineup_squads_by_club = _load_lineup_squads(data_dir, ucl_game_ids)
@@ -287,12 +296,15 @@ def generate(seed: int | None = None, data_dir: str = DEFAULT_DATA_DIR) -> Synth
     # entry -- `current_club_name` is a real column on players.csv even when
     # clubs.csv itself has no row for that club -- and mark it honestly as outside
     # this dataset's league-strength coverage rather than guessing a country/coefficient.
+    # `ucl_club_names` (games.csv.gz) is tried first: 3 of the 36 real UCL clubs have a
+    # blank `current_club_name` on every one of their players too, which otherwise
+    # displayed as a bare "Club {id}" in the opponent draw / coach report.
     for row in candidate_rows.values():
         cid = row["current_club_id"]
         if cid not in club_rows:
             club_rows[cid] = _ClubInfo(
                 club_id=cid,
-                name=row["current_club_name"] or f"Club {cid}",
+                name=ucl_club_names.get(cid) or row["current_club_name"] or f"Club {cid}",
                 country="Unknown (league not in dataset)",
                 competition="Other",
             )

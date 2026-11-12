@@ -52,3 +52,20 @@ def test_evidence_always_includes_all_three_zones() -> None:
     squad = [_player("LB", 80.0), _player("CB", 80.0), _player("RB", 80.0)]
     result = opponent_weak_zone(squad)
     assert set(result.zone_strengths) == {"left", "center", "right"}
+
+
+def test_a_one_point_gap_is_not_a_clear_weakness() -> None:
+    """Found live (friend playtesting): a zone rated 49 against a 50 average was
+    flagged as a "clear weakness" -- noise in a percentile-derived score, not a real
+    gap. WEAK_ZONE_MIN_GAP requires at least a 10-point gap now."""
+    squad = [_player("LB", 49.0), _player("CB", 70.0), _player("RB", 65.0)]
+    result = opponent_weak_zone(squad)
+    assert not result.has_clear_weakness
+    assert "No clear weakness" in result.description
+
+
+def test_tournament_label_is_used_in_the_description() -> None:
+    squad = [_player("LB", 35.0), _player("CB", 70.0), _player("RB", 65.0)]
+    result = opponent_weak_zone(squad, tournament_label="UCL")
+    assert "UCL average" in result.description
+    assert "league average" not in result.description

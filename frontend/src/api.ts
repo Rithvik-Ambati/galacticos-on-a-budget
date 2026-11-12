@@ -70,12 +70,24 @@ export function rematch(sessionId: string) {
 
 export function searchPlayers(
   sessionId: string,
-  params: { q?: string; position_group?: string; slot_id?: string; maxPriceEur?: number; limit?: number },
+  params: {
+    q?: string;
+    position_group?: string;
+    slot_id?: string;
+    formation?: string;
+    assignments?: Record<string, string>;
+    maxPriceEur?: number;
+    limit?: number;
+  },
 ) {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
   if (params.position_group) qs.set("position_group", params.position_group);
   if (params.slot_id) qs.set("slot_id", params.slot_id);
+  if (params.formation) qs.set("formation", params.formation);
+  if (params.assignments && Object.keys(params.assignments).length > 0) {
+    qs.set("assignments", JSON.stringify(params.assignments));
+  }
   if (params.maxPriceEur != null) qs.set("max_price_eur", String(params.maxPriceEur));
   qs.set("limit", String(params.limit ?? 30));
   return request<{ results: PlayerSearchResult[] }>(`/sessions/${sessionId}/players/search?${qs.toString()}`);

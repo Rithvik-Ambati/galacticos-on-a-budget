@@ -25,7 +25,7 @@ def _content_hash(text: str) -> str:
 
 def _player_profile_text(player: Player, features: PlayerFeatures, stats: PlayerStatsSeason, price: Price | None) -> str:
     group = _group(player)
-    role_fit = compute_role_fit(features.role_percentiles)
+    role_fit = compute_role_fit(features.role_percentiles, group)
     best_role = max(role_fit.items(), key=lambda kv: kv[1])[0].replace("_", " ") if role_fit else "generalist"
     confidence_note = (
         "Stats confidence is low -- limited detailed coverage for this player."

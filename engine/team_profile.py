@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import statistics
 
-from config.game import LEAGUE_AVERAGE_ABILITY_SCORE
+from config.game import LEAGUE_AVERAGE_ABILITY_SCORE, WEAK_ZONE_MIN_GAP
 from engine.schemas import Lineup, OpponentWeakZone, PlayerCard, TeamProfile
 
 PPDA_AGGRESSIVE = 6.0  # a very high press
@@ -44,12 +44,21 @@ def _opponent_attacking_zone_strength(opponent_lineup: Lineup) -> dict[str, floa
 
 
 def opponent_weak_zone(
-    squad: list[PlayerCard], league_average: float = LEAGUE_AVERAGE_ABILITY_SCORE
+    squad: list[PlayerCard],
+    league_average: float = LEAGUE_AVERAGE_ABILITY_SCORE,
+    *,
+    tournament_label: str = "league",
 ) -> OpponentWeakZone:
     """Screen 3's "where they're weak": the opponent's own defensive personnel strength
     per horizontal zone (LB/LWB -> left, CB -> center, RB/RWB -> right), compared
     against the league-average ability baseline -- an attacking opportunity for the
-    user, the mirror image of zone_threat_map's "threat to the user" measure."""
+    user, the mirror image of zone_threat_map's "threat to the user" measure.
+
+    A zone only counts as a "clear weakness" once it trails by at least
+    WEAK_ZONE_MIN_GAP: a 1-point gap (49 vs 50) is noise in a percentile-derived score,
+    not a real opening (found live, friend playtesting). `tournament_label` lets the
+    caller say "UCL average" in UCL mode instead of a hardcoded "league average", which
+    is otherwise shown even when the opponent isn't a domestic-league side at all."""
     by_zone: dict[str, list[float]] = {"left": [], "center": [], "right": []}
     for p in squad:
         zone = _DEFENSIVE_ZONE_BY_POSITION_CODE.get(p.position_code)
@@ -63,17 +72,17 @@ def opponent_weak_zone(
 
     weakest_zone = min(zone_strengths, key=lambda z: zone_strengths[z])
     weakest_value = zone_strengths[weakest_zone]
-    below_average = weakest_value < league_average
+    below_average = (league_average - weakest_value) >= WEAK_ZONE_MIN_GAP
 
     if below_average:
         description = (
             f"Their {weakest_zone} defensive zone rates {weakest_value:.0f}, below the "
-            f"league average of {league_average:.0f} — an opening to attack."
+            f"{tournament_label} average of {league_average:.0f} — an opening to attack."
         )
     else:
         description = (
             f"No clear weakness; their least strong zone is {weakest_zone} "
-            f"({weakest_value:.0f} vs league average {league_average:.0f})."
+            f"({weakest_value:.0f} vs {tournament_label} average {league_average:.0f})."
         )
 
     return OpponentWeakZone(

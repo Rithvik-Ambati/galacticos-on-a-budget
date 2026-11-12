@@ -178,6 +178,58 @@ async def test_invalid_lineup_returns_422(client: httpx.AsyncClient) -> None:
     assert r.status_code == 422
 
 
+async def test_player_search_eligibility_uses_the_clients_in_progress_formation(client: httpx.AsyncClient) -> None:
+    """Found live (friend playtesting): building in any formation other than 4-3-3
+    meant no player was ever clickable. Root cause -- /players/search evaluated
+    eligibility against the *graph's saved* formation/assignments (still "4-3-3"/empty
+    before the first /lineup/analyse), not the client's current in-progress picks. A
+    slot id that only exists in another formation (e.g. 4-2-3-1's "DM1") made
+    slot_by_id() raise for every single candidate, greying out the whole list. Fixed by
+    letting the client pass its own current `formation`/`assignments`."""
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    await client.post(f"/sessions/{session_id}/draw")
+
+    # Before the fix (and still true if `formation` is omitted): the graph's saved
+    # formation defaults to "4-3-3", which has no "DM1" slot -- every result comes back
+    # ineligible with a `slot_by_id` error, reproducing the original bug exactly.
+    r = await client.get(
+        f"/sessions/{session_id}/players/search",
+        params={"position_group": "MF", "slot_id": "DM1", "limit": 10},
+    )
+    assert r.status_code == 200
+    stale_results = r.json()["results"]
+    assert len(stale_results) > 0
+    assert all(not res["eligibility"]["eligible"] for res in stale_results)
+
+    # With the client's actual in-progress formation passed through, DM1 (a real
+    # 4-2-3-1 MF slot) resolves correctly and eligible MF candidates come back.
+    r = await client.get(
+        f"/sessions/{session_id}/players/search",
+        params={"position_group": "MF", "slot_id": "DM1", "formation": "4-2-3-1", "limit": 10},
+    )
+    assert r.status_code == 200
+    fixed_results = r.json()["results"]
+    assert len(fixed_results) > 0
+    assert any(res["eligibility"]["eligible"] for res in fixed_results)
+
+
+async def test_player_search_assignments_param_is_validated(client: httpx.AsyncClient) -> None:
+    r = await client.post("/sessions", json={"mode": "wc"})
+    session_id = r.json()["session_id"]
+    await client.post(f"/sessions/{session_id}/draw")
+
+    r = await client.get(
+        f"/sessions/{session_id}/players/search", params={"assignments": "not-json", "limit": 5}
+    )
+    assert r.status_code == 400
+
+    r = await client.get(
+        f"/sessions/{session_id}/players/search", params={"assignments": '["not", "a", "dict"]', "limit": 5}
+    )
+    assert r.status_code == 400
+
+
 async def test_simulate_before_lock_in_is_409(client: httpx.AsyncClient) -> None:
     r = await client.post("/sessions", json={"mode": "wc"})
     session_id = r.json()["session_id"]

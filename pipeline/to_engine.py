@@ -6,6 +6,8 @@ same boundary against db/) intact.
 
 from __future__ import annotations
 
+import unicodedata
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,19 +22,53 @@ def _as_float(value: object) -> float:
     return float(value) if isinstance(value, (int, float, str)) else 0.0
 
 
+# Letters Unicode NFKD decomposition doesn't reduce to a plain ASCII base letter +
+# combining mark (so the strip-combining-marks step below leaves them untouched) --
+# found by a real player-search audit: "Odegaard"/"Gyokeres" typed without accents
+# matched nothing because the stored names are "Ødegaard"/"Gyökeres" and NFKD alone
+# doesn't turn Ø into O.
+_EXTRA_LETTER_FOLDS = str.maketrans({
+    "ø": "o", "Ø": "O", "ı": "i", "İ": "I", "ß": "ss", "đ": "d", "Đ": "D",
+    "æ": "ae", "Æ": "AE", "þ": "th", "Þ": "Th", "ł": "l", "Ł": "L",
+})
+
+
+def normalize_name(s: str) -> str:
+    """Case- and accent-insensitive form of a name for matching -- "Ødegaard" and
+    "Odegaard" (and "ødegaard", "ODEGAARD", ...) all normalize to the same string.
+    Used on both the stored name and the user's search text, so neither side needs to
+    already match the other's accenting (docs/DECISIONS.md "Player search was
+    accent-sensitive")."""
+    folded = s.translate(_EXTRA_LETTER_FOLDS)
+    decomposed = unicodedata.normalize("NFKD", folded)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+def _match_rank(normalized_name: str, normalized_query: str) -> int:
+    """0 = exact, 1 = starts with the query, 2 = contains it elsewhere -- used to put
+    an exact hit (searching "Rodri" for Rodri) ahead of an unrelated player who merely
+    contains the text (Rodrigo Zalazar), rather than sorting matches by ability alone."""
+    if normalized_name == normalized_query:
+        return 0
+    if normalized_name.startswith(normalized_query):
+        return 1
+    return 2
+
+
 def _to_player_card(
     player: Player, features: PlayerFeatures, stats: PlayerStatsSeason, price: Price | None
 ) -> PlayerCard:
+    group = _group(player)
     return PlayerCard(
         player_id=player.player_id,
         name=player.name,
         nationality=player.nationality,
-        position_group=_group(player),
+        position_group=group,
         position_code=player.positions[0] if player.positions else "CM",
         ability_score=features.ability_score,
         price_eur=price.price_eur if price else 1_000_000,
         confidence=features.confidence,
-        role_fit=compute_role_fit(features.role_percentiles),
+        role_fit=compute_role_fit(features.role_percentiles, group),
         per90=_per90(stats),
         preferred_foot=player.preferred_foot,
         natural_position_codes=list(player.positions),
@@ -66,19 +102,42 @@ async def load_candidate_pool(
     """`limit` is an ability-sorted cap, not a count of "all" players -- callers that
     browse without a name (the optimizer's candidate pool, a UI slot with no search
     text yet) get the top `limit` by ability, by design. `name_query`, when given, is
-    applied in SQL *before* that cap, not after: without it, a player outside the top
-    `limit` by ability could never be found by name, however exact the search text."""
+    applied *before* that cap, not after: without it, a player outside the top `limit`
+    by ability could never be found by name, however exact the search text.
+
+    The name match itself happens in Python, not a SQL ILIKE, because it must be
+    accent-insensitive (`normalize_name`) in both directions -- "Odegaard" must find
+    "Ødegaard" and "Vinícius" must find the stored "Vinicius Junior" -- which a plain
+    SQL `ilike` can't do portably across SQLite (dev/test) and Postgres (prod) without
+    a stored normalized column. Matches are then ranked exact-before-prefix-before-
+    contains (`_match_rank`) so e.g. searching "Rodri" surfaces Rodri himself ahead of
+    Rodrigo Zalazar, rather than sorting name matches by ability alone."""
+    matched_ids: set[str] | None = None
+    normalized_query = ""
+    if name_query:
+        normalized_query = normalize_name(name_query)
+        name_rows = (await session.execute(select(Player.player_id, Player.name))).all()
+        matched_ids = {pid for pid, name in name_rows if normalized_query in normalize_name(name)}
+        if not matched_ids:
+            return []
+
     stmt = (
         select(Player, PlayerFeatures, PlayerStatsSeason, Price)
         .join(PlayerFeatures, PlayerFeatures.player_id == Player.player_id)
         .join(PlayerStatsSeason, PlayerStatsSeason.player_id == Player.player_id)
         .outerjoin(Price, (Price.player_id == Player.player_id) & (Price.tournament_snapshot == snapshot))
     )
-    if name_query:
-        stmt = stmt.where(Player.name.ilike(f"%{name_query}%"))
-    stmt = stmt.order_by(PlayerFeatures.ability_score.desc()).limit(limit)
+    if matched_ids is not None:
+        stmt = stmt.where(Player.player_id.in_(matched_ids))
+    else:
+        # no name filter: this is a plain ability-sorted browse, so the SQL-level cap
+        # (cheap, no need to pull the whole table) still applies here.
+        stmt = stmt.order_by(PlayerFeatures.ability_score.desc()).limit(limit)
     rows = (await session.execute(stmt)).all()
     cards = [_to_player_card(*row) for row in rows]
+    if matched_ids is not None:
+        cards.sort(key=lambda c: (_match_rank(normalize_name(c.name), normalized_query), -c.ability_score))
+        cards = cards[:limit]
     if exclude_ids:
         cards = [c for c in cards if c.player_id not in exclude_ids]
     if position_group:

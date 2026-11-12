@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { clubShortCode } from "../clubCode";
 import type { SimulationResult } from "../types";
 
 interface Props {
@@ -75,7 +76,7 @@ export function MatchDay({ opponentName, simulation, onContinue }: Props) {
         </div>
         <div className="col" style={{ alignItems: "center" }}>
           <div className="card" style={{ width: 70, height: 70, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", borderColor: "var(--gold)" }}>
-            <span className="headline gold" style={{ fontSize: 13 }}>{opponentName.slice(0, 3).toUpperCase()}</span>
+            <span className="headline gold" style={{ fontSize: 13 }}>{clubShortCode(opponentName)}</span>
           </div>
         </div>
       </div>

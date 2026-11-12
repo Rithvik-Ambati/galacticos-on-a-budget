@@ -1,3 +1,5 @@
+import { clubShortCode } from "../clubCode";
+
 interface Props {
   opponentName: string;
   onContinue: () => void;
@@ -25,7 +27,7 @@ export function Draw({ opponentName, onContinue }: Props) {
             className="card"
             style={{ width: 120, height: 120, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", borderColor: "var(--gold)" }}
           >
-            <span className="headline gold" style={{ fontSize: 22 }}>{opponentName.slice(0, 3).toUpperCase()}</span>
+            <span className="headline gold" style={{ fontSize: 22 }}>{clubShortCode(opponentName)}</span>
           </div>
           <div className="headline">{opponentName}</div>
         </div>

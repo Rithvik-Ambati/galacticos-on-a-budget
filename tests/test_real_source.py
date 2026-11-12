@@ -75,7 +75,9 @@ def test_load_games_team_sets_captures_wc2026_team_names_for_teams_missing_from_
     ]
     _write_games_csv(os.path.join(tmp_path, "games.csv.gz"), rows)
 
-    wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names = _load_games_team_sets(str(tmp_path))
+    wc_game_ids, wc_team_ids, ucl_game_ids, ucl_club_ids, wc_team_names, ucl_club_names = _load_games_team_sets(
+        str(tmp_path)
+    )
 
     assert wc_game_ids == {"g1", "g2"}
     assert wc_team_ids == {"14161", "4311", "3591", "32364"}
@@ -87,6 +89,9 @@ def test_load_games_team_sets_captures_wc2026_team_names_for_teams_missing_from_
         "3591": "Ivory Coast",
         "32364": "Curacao",
     }
+    # the WC/UCL name maps must stay separate -- a UCL game's club names must not
+    # leak into wc_team_names, and vice versa.
+    assert ucl_club_names == {"999": "Some Club", "998": "Other Club"}
 
 
 APPEARANCES_HEADER = [
